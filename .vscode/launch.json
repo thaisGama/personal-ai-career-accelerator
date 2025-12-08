@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run weekly planner stub",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/agent/weekly_planner.py",
+      "console": "integratedTerminal"
+    }
+  ]
+}
