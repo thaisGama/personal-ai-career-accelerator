@@ -319,21 +319,54 @@ def main() -> None:
         st.rerun()
 
     st.subheader("Add a new task")
-    new_title = st.text_input("New task title", key="new_task_title")
+    title_input = st.text_input("New task title", key="new_task_title")
+
+    existing_epics = sorted(tasks_df["epic"].dropna().unique().tolist())
+    epic_choice = st.selectbox(
+        "Epic",
+        options=["(Choose epic)", "Create new epic"] + existing_epics,
+        key="new_task_epic_choice",
+    )
+    new_epic_name = ""
+    if epic_choice == "Create new epic":
+        new_epic_name = st.text_input("New epic name", key="new_epic_name")
+
+    description_input = st.text_area(
+        "Description (optional)",
+        key="new_task_description",
+        height=80,
+    )
+
     if st.button("Add task"):
-        title = new_title.strip()
+        title = title_input.strip()
+        if epic_choice == "Create new epic":
+            epic = new_epic_name.strip()
+        elif epic_choice == "(Choose epic)":
+            epic = ""
+        else:
+            epic = epic_choice
+
         if not title:
             st.warning("Please enter a task title.")
+        elif not epic:
+            st.warning("Please choose or enter an epic.")
         else:
             next_id = int(tasks_df["id"].max()) + 1 if not tasks_df.empty else 1
             new_row = pd.DataFrame(
-                [{"id": next_id, "title": title, "status": "TODO", "epic": "General"}],
+                [
+                    {
+                        "id": next_id,
+                        "title": title,
+                        "status": "TODO",
+                        "epic": epic,
+                        "description": description_input.strip(),
+                    }
+                ],
                 columns=REQUIRED_COLUMNS,
             )
             tasks_df = pd.concat([tasks_df, new_row], ignore_index=True)
             save_tasks(tasks_df)
             st.success("Task added.")
-            st.session_state["new_task_title"] = ""
             st.rerun()
 
 
