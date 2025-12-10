@@ -6,7 +6,7 @@ import streamlit as st
 
 
 TASKS_FILE = Path(__file__).parent / "tasks.csv"
-REQUIRED_COLUMNS = ["id", "title", "status", "epic"]
+REQUIRED_COLUMNS = ["id", "title", "status", "epic", "description"]
 EPIC_WEEK_ORDER = [
     ("Foundations", "Week 1"),
     ("Setup", "Week 1"),
@@ -36,14 +36,21 @@ def load_tasks() -> pd.DataFrame:
 
     for column in REQUIRED_COLUMNS:
         if column not in df.columns:
-            # Default epic to General when absent; keep status defaulting to TODO.
-            default_value = "TODO" if column == "status" else "General" if column == "epic" else ""
+            # Default epic to General when absent; keep status defaulting to TODO; description empty.
+            default_value = (
+                "TODO"
+                if column == "status"
+                else "General"
+                if column == "epic"
+                else ""
+            )
             df[column] = default_value
 
     df = df[REQUIRED_COLUMNS]
     df["title"] = df["title"].fillna("").astype(str)
     df["status"] = df["status"].fillna("TODO").astype(str)
     df["epic"] = df["epic"].fillna("General").astype(str)
+    df["description"] = df["description"].fillna("").astype(str)
     df["id"] = pd.to_numeric(df["id"], errors="coerce")
 
     if df["id"].isna().any():
@@ -56,37 +63,161 @@ def load_tasks() -> pd.DataFrame:
 
     # Ensure predefined tasks exist with their epics (case-insensitive match on title).
     predefined_tasks = [
-        {"title": "Learn AI mental model", "epic": "Foundations"},
-        {"title": "Learn embeddings", "epic": "Foundations"},
-        {"title": "Learn agent workflow", "epic": "Foundations"},
-        {"title": "Create GitHub repo", "epic": "Setup"},
-        {"title": "Add folder structure", "epic": "Setup"},
-        {"title": "Write README v0.1", "epic": "Setup"},
-        {"title": "Set up development environment", "epic": "Setup"},
-        {"title": "Define agent prompt structure", "epic": "Agent_MVP"},
-        {"title": "Implement agent LLM call", "epic": "Agent_MVP"},
-        {"title": "Add file-saving logic", "epic": "Agent_MVP"},
-        {"title": "Run generator once", "epic": "Agent_MVP"},
-        {"title": "Improve markdown formatting", "epic": "Agent_v2"},
-        {"title": "Add memory feature", "epic": "Agent_v2"},
-        {"title": "Commit + push MVP", "epic": "Agent_v2"},
-        {"title": "Draft LinkedIn post #1", "epic": "Visibility"},
-        {"title": "Add micro-feature to agent", "epic": "Visibility"},
-        {"title": "Write week summary", "epic": "Visibility"},
-        {"title": "Choose Week 2 feature", "epic": "Applied_Feature"},
-        {"title": "Write functional spec", "epic": "Applied_Feature"},
-        {"title": "Implement minimal feature", "epic": "Applied_Feature"},
-        {"title": "Generate example output", "epic": "Applied_Feature"},
-        {"title": "Create Streamlit skeleton", "epic": "AI_App"},
-        {"title": "Integrate agent backend", "epic": "AI_App"},
-        {"title": "Add vector search + memory", "epic": "AI_App"},
-        {"title": "Add UI components", "epic": "AI_App"},
-        {"title": "Local deployment", "epic": "AI_App"},
-        {"title": "Create landing page", "epic": "Monetization"},
-        {"title": "Deploy app online", "epic": "Monetization"},
-        {"title": "Finalize portfolio", "epic": "Monetization"},
-        {"title": "Write LinkedIn posts", "epic": "Monetization"},
-        {"title": "Define SaaS MVP roadmap", "epic": "Monetization"},
+        {
+            "title": "Learn AI mental model",
+            "epic": "Foundations",
+            "description": "Read a short explanation of LLM + memory + tools and be able to explain it in your own words.",
+        },
+        {
+            "title": "Learn embeddings",
+            "epic": "Foundations",
+            "description": "Understand what embeddings are, how they encode meaning, and how they’re used with vector search.",
+        },
+        {
+            "title": "Learn agent workflow",
+            "epic": "Foundations",
+            "description": "Learn the basic agent loop: understand → choose tool → act → observe → repeat.",
+        },
+        {
+            "title": "Create GitHub repo",
+            "epic": "Setup",
+            "description": "Create the personal-ai-career-accelerator repo (local + remote) for all project code.",
+        },
+        {
+            "title": "Add folder structure",
+            "epic": "Setup",
+            "description": "Create base folders: /agent, /weekly_plans, /tasks, /posts, /docs.",
+        },
+        {
+            "title": "Write README v0.1",
+            "epic": "Setup",
+            "description": "Draft a short README describing goal, roadmap, and current status.",
+        },
+        {
+            "title": "Set up development environment",
+            "epic": "Setup",
+            "description": "Create venv/devcontainer, install dependencies, ensure `streamlit run` works.",
+        },
+        {
+            "title": "Define agent prompt structure",
+            "epic": "Agent_MVP",
+            "description": "Write the prompt template that takes your goal + time and outputs a 1-week plan with micro-tasks and a mini-project.",
+        },
+        {
+            "title": "Implement agent LLM call",
+            "epic": "Agent_MVP",
+            "description": "Create a Python function that calls the OpenAI API with that prompt and returns markdown.",
+        },
+        {
+            "title": "Add file-saving logic",
+            "epic": "Agent_MVP",
+            "description": "Save generated plans to /weekly_plans/week_XX_plan.md and LinkedIn drafts to /posts/.",
+        },
+        {
+            "title": "Run generator once",
+            "epic": "Agent_MVP",
+            "description": "Run the planner once end-to-end and review the output.",
+        },
+        {
+            "title": "Improve markdown formatting",
+            "epic": "Agent_v2",
+            "description": "Make the generated plan easy to read: headings, bullet lists, durations, priorities.",
+        },
+        {
+            "title": "Add memory feature",
+            "epic": "Agent_v2",
+            "description": "After each week, append a short summary of completed work to /docs/memory.md and feed it into future plans.",
+        },
+        {
+            "title": "Commit + push MVP",
+            "epic": "Agent_v2",
+            "description": "Stage, commit, and push all current changes (agent + planner + tracker) to GitHub with a clear message.",
+        },
+        {
+            "title": "Draft LinkedIn post #1",
+            "epic": "Visibility",
+            "description": "Write a short post announcing you’re building your personal AI career accelerator (what, why, how).",
+        },
+        {
+            "title": "Add micro-feature to agent",
+            "epic": "Visibility",
+            "description": "Add one small improvement to planner output, e.g. duration labels or priority tags for each task.",
+        },
+        {
+            "title": "Write week summary",
+            "epic": "Visibility",
+            "description": "Write 3–5 sentences in /docs/week1_summary.md about what you learned and built this week.",
+        },
+        {
+            "title": "Choose Week 2 feature",
+            "epic": "Applied_Feature",
+            "description": "Decide which product-core feature to build (course summarizer, journaling insights, LinkedIn generator, etc.).",
+        },
+        {
+            "title": "Write functional spec",
+            "epic": "Applied_Feature",
+            "description": "Write a 0.5–1 page spec describing inputs, outputs, and main steps for that feature.",
+        },
+        {
+            "title": "Implement minimal feature",
+            "epic": "Applied_Feature",
+            "description": "Code the smallest working version of that feature without polishing.",
+        },
+        {
+            "title": "Generate example output",
+            "epic": "Applied_Feature",
+            "description": "Run the feature on a real input and save the result under /docs/examples/.",
+        },
+        {
+            "title": "Create Streamlit skeleton",
+            "epic": "AI_App",
+            "description": "Create a basic multi-section Streamlit app (navigation, layout) for your AI assistant.",
+        },
+        {
+            "title": "Integrate agent backend",
+            "epic": "AI_App",
+            "description": "Wire the weekly planner and one feature into the app so they can be triggered from the UI.",
+        },
+        {
+            "title": "Add vector search + memory",
+            "epic": "AI_App",
+            "description": "Add a simple vector store for notes/summaries and let the app query them.",
+        },
+        {
+            "title": "Add UI components",
+            "epic": "AI_App",
+            "description": "Add inputs, buttons, and result sections to make the app pleasant to use.",
+        },
+        {
+            "title": "Local deployment",
+            "epic": "AI_App",
+            "description": "Be able to start the app locally and use all core features without errors.",
+        },
+        {
+            "title": "Create landing page",
+            "epic": "Monetization",
+            "description": "Write a simple landing page or README section explaining who the app is for and what problem it solves.",
+        },
+        {
+            "title": "Deploy app online",
+            "epic": "Monetization",
+            "description": "Deploy the Streamlit app (Streamlit Cloud / Hugging Face / etc.) so it’s available via URL.",
+        },
+        {
+            "title": "Finalize portfolio",
+            "epic": "Monetization",
+            "description": "Update your portfolio/profile with repo link, app link, and key screenshots.",
+        },
+        {
+            "title": "Write LinkedIn posts",
+            "epic": "Monetization",
+            "description": "Write 2 posts: one about the app, one about your learning journey and what you offer.",
+        },
+        {
+            "title": "Define SaaS MVP roadmap",
+            "epic": "Monetization",
+            "description": "Outline the next 5–10 features, pricing idea, and steps to turn this into a paid product.",
+        },
     ]
     existing_titles = set(df["title"].str.strip().str.lower())
     current_max_id = int(df["id"].max()) if not df.empty else 0
@@ -98,6 +229,7 @@ def load_tasks() -> pd.DataFrame:
         mask = df["title"].str.strip().str.lower() == normalized_title
         if mask.any():
             df.loc[mask, "epic"] = item["epic"]
+            df.loc[mask, "description"] = item.get("description", "")
 
     # Add any missing predefined tasks with their epics.
     for item in predefined_tasks:
@@ -106,7 +238,13 @@ def load_tasks() -> pd.DataFrame:
             continue
         current_max_id += 1
         new_rows.append(
-            {"id": current_max_id, "title": item["title"], "status": "TODO", "epic": item["epic"]}
+            {
+                "id": current_max_id,
+                "title": item["title"],
+                "status": "TODO",
+                "epic": item["epic"],
+                "description": item.get("description", ""),
+            }
         )
         existing_titles.add(normalized_title)
 
@@ -167,6 +305,9 @@ def main() -> None:
                 with col2:
                     status_label = "🟢 DONE" if checked else "🔴 TODO"
                     st.markdown(f"**{task.title}**  {status_label}")
+                    desc = getattr(task, "description", "") or ""
+                    if desc:
+                        st.caption(desc)
                 if checked != is_done:
                     tasks_df.loc[tasks_df["id"] == task.id, "status"] = (
                         "DONE" if checked else "TODO"
@@ -175,7 +316,7 @@ def main() -> None:
 
     if updated:
         save_tasks(tasks_df)
-        st.experimental_rerun()
+        st.rerun()
 
     st.subheader("Add a new task")
     new_title = st.text_input("New task title", key="new_task_title")
@@ -193,7 +334,7 @@ def main() -> None:
             save_tasks(tasks_df)
             st.success("Task added.")
             st.session_state["new_task_title"] = ""
-            st.experimental_rerun()
+            st.rerun()
 
 
 if __name__ == "__main__":
