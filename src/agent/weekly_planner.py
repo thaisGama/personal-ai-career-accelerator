@@ -20,102 +20,60 @@ def build_weekly_planner_prompt(
     preferences: str | None,
 ) -> Tuple[str, str]:
     """Construct system and user prompts for the weekly planner agent."""
-    system_prompt = """You are an AI Weekly Learning Planner for a busy professional who can only study in
-micro-sessions of 10–30 minutes.
+    system_prompt = """You are an AI Weekly Learning Planner. Generate a clean, motivating weekly plan that fits into 10–30 minute sessions. Return only raw Markdown (no code fences).
 
-FORMAT ALL OUTPUT AS CLEAN, BEAUTIFUL MARKDOWN.
+OUTPUT TEMPLATE (FOLLOW EXACTLY):
 
-Your job:
-1. Read the user's goal and available time.
-2. Generate a 1-week learning plan with micro-tasks.
-3. Create a mini-project for the week.
-4. Write a LinkedIn post template about the week’s progress.
-5. Include clear formatting, checkboxes, headings, and emojis.
-6. Make the plan motivating, structured, and realistic.
+Week X Learning Plan
+📌 Summary of Goals
+- One-sentence summary of the week
+- 2–3 key focus areas
 
------------------------
-INPUT YOU RECEIVE:
-- Goal for the week
-- Time available per week (example: "2 hours/week, max 30 min sessions")
-- Skill level (beginner, intermediate, etc.)
-- Any preferences (ex: “I learn best with images”)
+🗓️ Daily Breakdown
+Day 1: <short theme>
+- <subtask 1>
+- <subtask 2>
 
------------------------
-OUTPUT FORMAT (USE EXACTLY THIS STRUCTURE):
+Day 2: <short theme>
+- <subtask 1>
+- <subtask 2>
 
-# 📅 Week 1 Learning Plan
+Day 3: <short theme>
+- <subtask 1>
+- <subtask 2>
 
-## 🎯 Weekly Goal
-{short explanation of the goal}
+Day 4: <short theme>
+- <subtask 1>
+- <subtask 2>
 
-## 🧠 Key Skills for This Week
-- Skill 1
-- Skill 2
-- Skill 3
-(3–5 bullets only)
+Day 5: <short theme>
+- <subtask 1>
+- <subtask 2>
 
-## 🗂️ Overview
-A short motivating summary (2–3 lines) describing what the user will achieve.
+🧩 Micro Tasks (10–30 min)
+⭐ Task 1 (10 min): <description>
+⭐ Task 2 (15 min): <description>
+⭐ Task 3 (30 min): <description>
 
-## 📚 Learning Resources
-Add 2–4 short, simple explanations or links to free resources.
-Use bullets.
+🧪 Mini Project for the Week
+Title: <short title>
+Scope:
+- <bullet 1>
+- <bullet 2>
+- <bullet 3>
 
-## 📝 Micro-Tasks (10–30 min each)
-Format each task like this:
+💬 LinkedIn Post Template
+<one paragraph the user can adapt and post on LinkedIn>
 
-- [ ] **Task {n}: {Title}** — {duration}
-   - What to do (1 sentence)
-   - Why it matters (1 short line)
+📂 Files to Generate
+- /weekly_plans/week_X_plan.md
+- /posts/linkedin_week_X.md
+- /tasks/task_X.md
 
-Example:
-- [ ] **Task 1: Learn embeddings** — 10 min  
-   - Read a short explanation of embeddings and why they represent meaning  
-   - Helps build your future AI product's memory system
-
-Create 6–10 micro-tasks per week.
-
-## 🚀 Mini-Project of the Week
-### **{Title of mini-project}**
-Explain in 3–5 lines:
-- What the user will build  
-- Why it accelerates learning  
-- What the final artifact will look like  
-
-Add a checklist:
-- [ ] Step 1  
-- [ ] Step 2  
-- [ ] Step 3  
-
-## 💼 Portfolio Artifact(s)
-Describe what the user will produce:
-- A markdown file?  
-- A small script?  
-- A screenshot?  
-- A diagram?  
-
-## 🔗 LinkedIn Post Template
-Provide a short, motivating post the user can copy/paste.
-Structure:
-1. Opening sentence (progress or insight)
-2. What was built or learned
-3. Why it matters
-4. Small call to action ("follow my journey")
-
-Keep it under 120 words.
-
------------------------
-IMPORTANT STYLE RULES:
-- Use simple, direct language.
-- Use emojis sparingly but consistently.
-- Keep formatting extremely clean.
-- Every task MUST have a duration.
-- Always include a “why this matters” sentence.
-- The final output must feel motivating and achievable.
------------------------
-
-NOW GENERATE THE WEEKLY PLAN.
-"""
+STYLE RULES:
+- Use headings, bullets, and checkboxes exactly as shown.
+- Keep language concise and encouraging.
+- No code fences. Output only the Markdown content."""
 
     user_prompt = f"""Goal for the week: {goal}
 Time available per week: {time_per_week_hours} hours
@@ -168,6 +126,41 @@ def call_llm(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL) -
     return message
 
 
+def format_weekly_plan(raw_text: str) -> str:
+    """Clean the raw LLM response and ensure it is plain Markdown."""
+    content = raw_text.strip()
+
+    # Remove wrapping code fences if present.
+    if content.startswith("```"):
+        # Remove first fence
+        content = content.split("```", 1)[-1].strip()
+    if content.endswith("```"):
+        content = content.rsplit("```", 1)[0].strip()
+
+    # Ensure there is a top-level Week heading.
+    if not content.lstrip().lower().startswith("# week"):
+        content = "# Week Plan\n\n" + content
+
+    return content
+
+
+def save_weekly_plan(
+    markdown: str, output_dir: str | Path = "weekly_plans", filename: str | None = None
+) -> Path:
+    """
+    Save the given markdown string to a .md file inside `output_dir`.
+    """
+    target_dir = Path(output_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    if filename is None:
+        filename = f"week_plan_{date.today().isoformat()}.md"
+
+    path = target_dir / filename
+    path.write_text(markdown.strip(), encoding="utf-8")
+    return path
+
+
 def split_markdown_into_plan_and_linkedin(full_markdown: str) -> Tuple[str, str]:
     """Split the full markdown into the complete plan and the LinkedIn post section."""
     new_heading = "## 🔗 LinkedIn Post Template"
@@ -196,11 +189,11 @@ def save_week_files(
     plan_dir.mkdir(parents=True, exist_ok=True)
     posts_dir.mkdir(parents=True, exist_ok=True)
 
-    plan_path = plan_dir / f"week_{today_str}.md"
-    linkedin_path = posts_dir / f"linkedin_{today_str}.md"
+    plan_path = plan_dir / f"week_{today_str}_plan.md"
+    linkedin_path = posts_dir / f"linkedin_week_{today_str}.md"
 
-    plan_path.write_text(plan_markdown, encoding="utf-8")
-    linkedin_path.write_text(linkedin_markdown, encoding="utf-8")
+    plan_path.write_text(plan_markdown.strip(), encoding="utf-8")
+    linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
 
     return plan_path, linkedin_path
 
@@ -221,18 +214,24 @@ def generate_and_save_week(
         preferences=preferences,
     )
 
-    markdown = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
-    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(markdown)
-    plan_path, linkedin_path = save_week_files(
-        plan_markdown=plan_markdown,
-        linkedin_markdown=linkedin_markdown,
-        base_dir=base_dir,
+    raw_markdown = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
+    formatted_markdown = format_weekly_plan(raw_markdown)
+    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
+
+    plan_path = save_weekly_plan(
+        markdown=plan_markdown,
+        output_dir=Path(base_dir) / "weekly_plans",
     )
+
+    posts_dir = Path(base_dir) / "posts"
+    posts_dir.mkdir(parents=True, exist_ok=True)
+    linkedin_path = posts_dir / f"linkedin_week_{date.today().isoformat()}.md"
+    linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
 
     return {
         "plan_path": plan_path,
         "linkedin_path": linkedin_path,
-        "raw_markdown": markdown,
+        "raw_markdown": raw_markdown,
     }
 
 
@@ -253,6 +252,6 @@ if __name__ == "__main__":
             max_session_minutes=30,
             preferences="visual learning, portfolio focus",
         )
-        print(format_summary(result["plan_path"], result["linkedin_path"]))
+        print(f"Weekly plan generated and saved to {result['plan_path']}")
     except Exception as exc:  # pragma: no cover - runtime demo
         print(f"Error generating weekly plan: {exc}")
