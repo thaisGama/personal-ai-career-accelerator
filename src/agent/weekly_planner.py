@@ -22,38 +22,58 @@ def build_weekly_planner_prompt(
     """Construct system and user prompts for the weekly planner agent."""
     system_prompt = """You are an AI Weekly Learning Planner. Generate a clean, motivating weekly plan that fits into 10–30 minute sessions. Return only raw Markdown (no code fences).
 
-OUTPUT TEMPLATE (FOLLOW EXACTLY):
+At the end of your response, add a short “memory snippet” describing the week’s focus and the key intentions in 2–4 bullet points.
 
+Use this exact output format (do not include explanations):
+
+<<PLAN_MARKDOWN>>
 Week X Learning Plan
 📌 Summary of Goals
 - One-sentence summary of the week
 - 2–3 key focus areas
 
 🗓️ Daily Breakdown
+In the "🗓️ Daily Breakdown" section, list only the main focus/theme for each day (no detailed tasks). Example:
+- Day 1: AI foundations and terminology
+- Day 2: Supervised vs. unsupervised learning
+- Day 3: First agent concept, etc.
+
+🗓️ Daily Breakdown
 Day 1: <short theme>
-- <subtask 1>
-- <subtask 2>
-
 Day 2: <short theme>
-- <subtask 1>
-- <subtask 2>
-
 Day 3: <short theme>
-- <subtask 1>
-- <subtask 2>
-
 Day 4: <short theme>
-- <subtask 1>
-- <subtask 2>
-
 Day 5: <short theme>
-- <subtask 1>
-- <subtask 2>
 
-🧩 Micro Tasks (10–30 min)
-⭐ Task 1 (10 min): <description>
-⭐ Task 2 (15 min): <description>
-⭐ Task 3 (30 min): <description>
+In the section "🧩 Micro Tasks (10–30 min)", generate 3–5 very concrete micro-tasks.
+
+Each micro-task MUST include:
+
+- A title + duration + priority emoji (🔥 high, ⭐ medium, 🌱 low)
+- A Learning capsule (a short, self-contained explanation of the core idea, max ~150 words)
+- A Key takeaways list (3–5 bullets of what the user should know after this task)
+- A Suggested resource (optional) – at most ONE resource:
+  - Prefer either:
+    - a well-known reference by name and platform (e.g. "Andrew Ng's short video 'What is Machine Learning'" on YouTube), OR
+    - a generic but focused description + search phrase (e.g. "search for 'intro to embeddings Chris McCormick' on YouTube and pick a 10–20 min video").
+  - Do NOT invent precise URLs. Use titles + platforms + search phrases instead.
+- A tiny Output (what the user will produce), like updating a notes file or running a small example.
+
+Use this exact markdown structure for each micro-task:
+
+- 🔥 **Task 1 (20 min): Short title here**  
+  - **Learning capsule (~150 words):**  
+    Short, focused explanation of the core idea for this task that the user can read without leaving the file.
+  - **Key takeaways:**  
+    - bullet 1  
+    - bullet 2  
+    - bullet 3
+  - **Suggested resource (optional):**  
+    Short description and, if appropriate, a title + platform + search phrase.
+  - **Output:**  
+    Very small, concrete result (e.g. "add 5 bullet notes to notes/ai_foundations.md" or "run the example script and write 3 lines about what happened").
+
+Make the learning capsule and key takeaways accurate and compact. The user should be able to learn the essentials just by reading the plan, even if they don't open the external resource.
 
 🧪 Mini Project for the Week
 Title: <short title>
@@ -69,6 +89,19 @@ Scope:
 - /weekly_plans/week_X_plan.md
 - /posts/linkedin_week_X.md
 - /tasks/task_X.md
+<<END_PLAN>>
+<<MEMORY_SNIPPET>>
+- bullet 1
+- bullet 2
+- bullet 3
+<<END_MEMORY>>
+
+For every micro-task in the "🧩 Micro Tasks" section, assign one priority tag:
+- 🔥 High priority (critical for the week's goal)
+- ⭐ Medium priority (helpful but not essential)
+- 🌱 Low priority (optional stretch task)
+
+Follow the micro-task structure shown above (include priority emoji, resource, what you'll learn bullets, and output).
 
 STYLE RULES:
 - Use headings, bullets, and checkboxes exactly as shown.
@@ -126,6 +159,16 @@ def call_llm(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL) -
     return message
 
 
+def extract_between(text: str, start: str, end: str) -> str:
+    """Return the substring between the given markers, or the stripped text if markers are missing."""
+    start_idx = text.find(start)
+    end_idx = text.find(end)
+    if start_idx == -1 or end_idx == -1:
+        return text.strip()
+    start_idx += len(start)
+    return text[start_idx:end_idx].strip()
+
+
 def format_weekly_plan(raw_text: str) -> str:
     """Clean the raw LLM response and ensure it is plain Markdown."""
     content = raw_text.strip()
@@ -159,6 +202,24 @@ def save_weekly_plan(
     path = target_dir / filename
     path.write_text(markdown.strip(), encoding="utf-8")
     return path
+
+
+def append_memory_snippet(snippet: str, path: str | Path = "docs/memory.md") -> Path:
+    """
+    Append a short memory snippet to the given file.
+    Creates the docs directory and file if they do not exist.
+    Each entry is prefixed with a heading containing today's date.
+    """
+    memory_path = Path(path)
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+
+    today = date.today().isoformat()
+    entry = f"\n\n## Week starting {today}\n{snippet.strip()}\n"
+
+    with memory_path.open("a", encoding="utf-8") as file:
+        file.write(entry)
+
+    return memory_path
 
 
 def split_markdown_into_plan_and_linkedin(full_markdown: str) -> Tuple[str, str]:
@@ -215,7 +276,10 @@ def generate_and_save_week(
     )
 
     raw_markdown = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
-    formatted_markdown = format_weekly_plan(raw_markdown)
+    plan_text = extract_between(raw_markdown, "<<PLAN_MARKDOWN>>", "<<END_PLAN>>")
+    memory_snippet = extract_between(raw_markdown, "<<MEMORY_SNIPPET>>", "<<END_MEMORY>>")
+
+    formatted_markdown = format_weekly_plan(plan_text)
     plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
 
     plan_path = save_weekly_plan(
@@ -228,10 +292,21 @@ def generate_and_save_week(
     linkedin_path = posts_dir / f"linkedin_week_{date.today().isoformat()}.md"
     linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
 
+    memory_path = None
+    if memory_snippet:
+        memory_path = append_memory_snippet(
+            memory_snippet, path=Path(base_dir) / "docs" / "memory.md"
+        )
+        print(f"Weekly plan saved to {plan_path}")
+        print(f"Memory updated at {memory_path}")
+    else:
+        print(f"Weekly plan saved to {plan_path} (no memory snippet found)")
+
     return {
         "plan_path": plan_path,
         "linkedin_path": linkedin_path,
         "raw_markdown": raw_markdown,
+        "memory_path": memory_path,
     }
 
 
