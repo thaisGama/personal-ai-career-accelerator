@@ -7,6 +7,7 @@ import streamlit as st
 
 TASKS_FILE = Path(__file__).parent / "tasks.csv"
 REQUIRED_COLUMNS = ["id", "title", "status", "epic", "description"]
+STATUS_OPTIONS = ["TODO", "IN_PROGRESS", "DONE"]
 EPIC_WEEK_ORDER = [
     ("Foundations", "Week 1"),
     ("Setup", "Week 1"),
@@ -22,6 +23,14 @@ EPIC_WEEK_ORDER = [
 def save_tasks(df: pd.DataFrame) -> None:
     """Persist tasks to CSV."""
     df.to_csv(TASKS_FILE, index=False)
+
+
+def status_display(status: str) -> str:
+    if status == "DONE":
+        return "🟢 DONE"
+    if status == "IN_PROGRESS":
+        return "🟡 IN PROGRESS"
+    return "🔴 TODO"
 
 
 def load_tasks() -> pd.DataFrame:
@@ -49,6 +58,7 @@ def load_tasks() -> pd.DataFrame:
     df = df[REQUIRED_COLUMNS]
     df["title"] = df["title"].fillna("").astype(str)
     df["status"] = df["status"].fillna("TODO").astype(str)
+    df.loc[~df["status"].isin(STATUS_OPTIONS), "status"] = "TODO"
     df["epic"] = df["epic"].fillna("General").astype(str)
     df["description"] = df["description"].fillna("").astype(str)
     df["id"] = pd.to_numeric(df["id"], errors="coerce")
@@ -263,7 +273,7 @@ def main() -> None:
 
     filter_choice = st.radio(
         "Show",
-        options=["TODO only", "All", "DONE only"],
+        options=["TODO only", "IN_PROGRESS only", "DONE only", "All"],
         index=0,
         horizontal=True,
     )
@@ -271,6 +281,8 @@ def main() -> None:
     filtered_df = tasks_df
     if filter_choice == "TODO only":
         filtered_df = tasks_df[tasks_df["status"] == "TODO"]
+    elif filter_choice == "IN_PROGRESS only":
+        filtered_df = tasks_df[tasks_df["status"] == "IN_PROGRESS"]
     elif filter_choice == "DONE only":
         filtered_df = tasks_df[tasks_df["status"] == "DONE"]
 
@@ -294,24 +306,23 @@ def main() -> None:
         expander_title = f"{week_label} — {epic}" if week_label else epic
         with st.expander(expander_title, expanded=has_todo):
             for task in epic_tasks.itertuples():
-                is_done = task.status == "DONE"
-                col1, col2 = st.columns([0.1, 0.9])
+                current_status = task.status if task.status in STATUS_OPTIONS else "TODO"
+                col1, col2 = st.columns([0.25, 0.75])
                 with col1:
-                    checked = st.checkbox(
-                        "",
-                        value=is_done,
-                        key=f"task_{task.id}",
+                    new_status = st.selectbox(
+                        "Status",
+                        STATUS_OPTIONS,
+                        index=STATUS_OPTIONS.index(current_status),
+                        key=f"status_{task.id}",
+                        label_visibility="collapsed",
                     )
                 with col2:
-                    status_label = "🟢 DONE" if checked else "🔴 TODO"
-                    st.markdown(f"**{task.title}**  {status_label}")
+                    st.markdown(f"**{task.title}**  {status_display(new_status)}")
                     desc = getattr(task, "description", "") or ""
                     if desc:
                         st.caption(desc)
-                if checked != is_done:
-                    tasks_df.loc[tasks_df["id"] == task.id, "status"] = (
-                        "DONE" if checked else "TODO"
-                    )
+                if new_status != task.status:
+                    tasks_df.loc[tasks_df["id"] == task.id, "status"] = new_status
                     updated = True
 
     if updated:
