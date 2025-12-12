@@ -7,6 +7,45 @@ import streamlit as st
 
 TASKS_FILE = Path(__file__).parent / "tasks.csv"
 REQUIRED_COLUMNS = ["id", "title", "status", "epic", "description"]
+STATUS_OPTIONS = ["TODO", "IN_PROGRESS", "DONE"]
+EPIC_META = {
+    "Foundations": {
+        "icon": "🎓",
+        "label": "Learning Foundations",
+    },
+    "Setup": {
+        "icon": "🛠️",
+        "label": "Repo & Environment",
+    },
+    "Agent_MVP": {
+        "icon": "🔵",
+        "label": "Planner Foundation (technical)",
+    },
+    "Agent_v2": {
+        "icon": "🟢",
+        "label": "Planner v2 — micro-features & memory",
+    },
+    "Visibility": {
+        "icon": "💛",
+        "label": "Visibility / Motivation / Portfolio",
+    },
+    "Applied_Feature": {
+        "icon": "🔥",
+        "label": "Memory v2 + Mini Project Engine",
+    },
+    "AI_App": {
+        "icon": "💥",
+        "label": "AI App — Product Shell",
+    },
+    "Monetization": {
+        "icon": "🟩",
+        "label": "Monetization & Positioning",
+    },
+    "General": {
+        "icon": "⚪",
+        "label": "General / Misc",
+    },
+}
 EPIC_WEEK_ORDER = [
     ("Foundations", "Week 1"),
     ("Setup", "Week 1"),
@@ -22,6 +61,14 @@ EPIC_WEEK_ORDER = [
 def save_tasks(df: pd.DataFrame) -> None:
     """Persist tasks to CSV."""
     df.to_csv(TASKS_FILE, index=False)
+
+
+def status_display(status: str) -> str:
+    if status == "DONE":
+        return "🟢 DONE"
+    if status == "IN_PROGRESS":
+        return "🟡 IN PROGRESS"
+    return "🔴 TODO"
 
 
 def load_tasks() -> pd.DataFrame:
@@ -49,6 +96,7 @@ def load_tasks() -> pd.DataFrame:
     df = df[REQUIRED_COLUMNS]
     df["title"] = df["title"].fillna("").astype(str)
     df["status"] = df["status"].fillna("TODO").astype(str)
+    df.loc[~df["status"].isin(STATUS_OPTIONS), "status"] = "TODO"
     df["epic"] = df["epic"].fillna("General").astype(str)
     df["description"] = df["description"].fillna("").astype(str)
     df["id"] = pd.to_numeric(df["id"], errors="coerce")
@@ -256,14 +304,24 @@ def load_tasks() -> pd.DataFrame:
 
 
 def main() -> None:
-    st.title("Task Tracker")
-    st.subheader("Your tasks")
-
     tasks_df = load_tasks()
+    total_tasks = len(tasks_df)
+    num_todo = int((tasks_df["status"] == "TODO").sum())
+    num_in_progress = int((tasks_df["status"] == "IN_PROGRESS").sum())
+    num_done = int((tasks_df["status"] == "DONE").sum())
+    percent_done = round(100 * num_done / total_tasks) if total_tasks > 0 else 0
+
+    st.title("⭐ Product + Learning Task Board")
+    st.markdown(f"### 🟩 STATUS SUMMARY — {percent_done}% complete")
+    st.markdown(f"You have **{num_done} / {total_tasks}** tasks done.")
+    st.markdown(
+        f"- 🔴 TODO: **{num_todo}**  ·  🟡 IN PROGRESS: **{num_in_progress}**  ·  🟢 DONE: **{num_done}**"
+    )
+    st.subheader("Your tasks")
 
     filter_choice = st.radio(
         "Show",
-        options=["TODO only", "All", "DONE only"],
+        options=["TODO only", "IN_PROGRESS only", "DONE only", "All"],
         index=0,
         horizontal=True,
     )
@@ -271,6 +329,8 @@ def main() -> None:
     filtered_df = tasks_df
     if filter_choice == "TODO only":
         filtered_df = tasks_df[tasks_df["status"] == "TODO"]
+    elif filter_choice == "IN_PROGRESS only":
+        filtered_df = tasks_df[tasks_df["status"] == "IN_PROGRESS"]
     elif filter_choice == "DONE only":
         filtered_df = tasks_df[tasks_df["status"] == "DONE"]
 
@@ -291,34 +351,42 @@ def main() -> None:
             continue
         has_todo = (epic_tasks["status"] != "DONE").any()
         week_label = week_by_epic.get(epic)
-        expander_title = f"{week_label} — {epic}" if week_label else epic
+        meta = EPIC_META.get(epic, {})
+        icon = meta.get("icon", "🔹")
+        section_label = meta.get("label", epic)
+        expander_title = (
+            f"{icon} {week_label} — {section_label}" if week_label else f"{icon} {section_label}"
+        )
         with st.expander(expander_title, expanded=has_todo):
-            for task in epic_tasks.itertuples():
-                is_done = task.status == "DONE"
-                col1, col2 = st.columns([0.1, 0.9])
-                with col1:
-                    checked = st.checkbox(
-                        "",
-                        value=is_done,
-                        key=f"task_{task.id}",
+            for idx, row in epic_tasks.iterrows():
+                current_status = row["status"] if row["status"] in STATUS_OPTIONS else "TODO"
+                col_status, col_text = st.columns([0.2, 0.8])
+                with col_status:
+                    new_status = st.selectbox(
+                        "Status",
+                        STATUS_OPTIONS,
+                        index=STATUS_OPTIONS.index(current_status),
+                        key=f"status_{row['id']}",
+                        label_visibility="collapsed",
                     )
-                with col2:
-                    status_label = "🟢 DONE" if checked else "🔴 TODO"
-                    st.markdown(f"**{task.title}**  {status_label}")
-                    desc = getattr(task, "description", "") or ""
+                with col_text:
+                    st.markdown(f"**{row['title']}**  {status_display(new_status)}")
+                    desc = row.get("description", "") or ""
                     if desc:
                         st.caption(desc)
-                if checked != is_done:
-                    tasks_df.loc[tasks_df["id"] == task.id, "status"] = (
-                        "DONE" if checked else "TODO"
-                    )
+                if new_status != row["status"]:
+                    tasks_df.loc[tasks_df["id"] == row["id"], "status"] = new_status
                     updated = True
+                # Divider between tasks for visual separation
+                if idx != epic_tasks.index[-1]:
+                    st.markdown("<hr style='margin: 0.3rem 0;'/>", unsafe_allow_html=True)
 
     if updated:
         save_tasks(tasks_df)
         st.rerun()
 
-    st.subheader("Add a new task")
+    st.markdown("---")
+    st.subheader("➕ Add a new task")
     title_input = st.text_input("New task title", key="new_task_title")
 
     existing_epics = sorted(tasks_df["epic"].dropna().unique().tolist())
