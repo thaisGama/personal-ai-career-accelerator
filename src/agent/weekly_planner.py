@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import date
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 from openai import OpenAI
 
@@ -18,9 +18,21 @@ def build_weekly_planner_prompt(
     time_per_week_hours: float,
     max_session_minutes: int,
     preferences: str | None,
+    memory_context: str,
+    memory_used: bool,
+    memory_source: str,
+    memory_char_count: int,
 ) -> Tuple[str, str]:
     """Construct system and user prompts for the weekly planner agent."""
     system_prompt = """You are an AI Weekly Learning Planner. Generate a clean, motivating weekly plan that fits into 10–30 minute sessions. Return only raw Markdown (no code fences).
+
+You must BEGIN your output with EXACTLY the following MEMORY_AUDIT block (no text before it). Do not change the provided values. For the Memory focus line, write one short sentence about what from memory influenced this plan, or "None" if nothing applied:
+
+MEMORY_AUDIT (must be echoed exactly at the very top of the output):
+Memory used: {MEMORY_USED}
+Memory source: {MEMORY_SOURCE}
+Memory characters injected: {MEMORY_CHAR_COUNT}
+Memory focus: <1 short sentence about what from memory influenced this plan, or "None">
 
 At the end of your response, add a short “memory snippet” describing the week’s focus and the key intentions in 2–4 bullet points.
 
@@ -108,11 +120,26 @@ STYLE RULES:
 - Keep language concise and encouraging.
 - No code fences. Output only the Markdown content."""
 
+    system_prompt = system_prompt.format(
+        MEMORY_USED="YES" if memory_used else "NO",
+        MEMORY_SOURCE=memory_source,
+        MEMORY_CHAR_COUNT=memory_char_count,
+    )
+
     user_prompt = f"""Goal for the week: {goal}
 Time available per week: {time_per_week_hours} hours
 Max session length: {max_session_minutes} minutes
 Skill level: intermediate data scientist
 Preferences: {preferences or 'none'}
+
+You are planning a new learning week for the user. You are given some memory from previous weeks (what they did, planned, or learned). Use it to:
+- avoid repeating identical tasks unless repetition is explicitly useful for mastery
+- connect this week’s tasks to what they did before ("last week you started X, this week you'll continue with Y")
+- adjust difficulty and scope logically, and if the user struggled with something, include a brief review task rather than repeating the full effort.
+
+=== CONTEXT FROM PAST WEEKS ===
+{memory_context}
+=== END CONTEXT ===
 
 The user is a working parent with limited energy. Suggest a realistic plan that fits into 10–30 minute focused blocks."""
 
@@ -222,6 +249,29 @@ def append_memory_snippet(snippet: str, path: str | Path = "docs/memory.md") -> 
     return memory_path
 
 
+def read_recent_memory(
+    path: str | Path = "docs/memory.md", max_chars: int = 2000
+) -> Optional[str]:
+    """
+    Read the memory file and return a recent snippet as a string.
+
+    - If the file does not exist, return None.
+    - If it exists, read its contents.
+    - If the file is very long, return only the last `max_chars` characters
+      (to keep the prompt size reasonable).
+    """
+    memory_path = Path(path)
+    if not memory_path.exists():
+        return None
+
+    text = memory_path.read_text(encoding="utf-8")
+    if len(text) <= max_chars:
+        return text.strip() or None
+
+    snippet = text[-max_chars:]
+    return snippet.strip() or None
+
+
 def split_markdown_into_plan_and_linkedin(full_markdown: str) -> Tuple[str, str]:
     """Split the full markdown into the complete plan and the LinkedIn post section."""
     new_heading = "## 🔗 LinkedIn Post Template"
@@ -268,18 +318,41 @@ def generate_and_save_week(
     base_dir: Path | str = ".",
 ) -> dict:
     """High-level orchestrator that builds prompts, calls the LLM, splits, and saves files."""
+    memory_path = Path(base_dir) / "docs" / "memory.md"
+    memory_text = read_recent_memory(path=memory_path)
+    memory_used = bool(memory_text and memory_text.strip())
+    memory_char_count = len(memory_text) if memory_used else 0
+    memory_source = memory_path.as_posix()
+
+
+    if memory_text:
+        memory_context = (
+            "Here is a summary of what the user has done and planned in previous weeks.\n"
+            "Use this to avoid repeating tasks and to propose logical next steps.\n\n"
+            f"{memory_text}\n"
+        )
+    else:
+        memory_context = "There is no past memory yet. Plan as if this is the first week.\n"
+
     system_prompt, user_prompt = build_weekly_planner_prompt(
         goal=goal,
         time_per_week_hours=time_per_week_hours,
         max_session_minutes=max_session_minutes,
         preferences=preferences,
+        memory_context=memory_context,
+        memory_used=memory_used,
+        memory_source=memory_source,
+        memory_char_count=memory_char_count,
     )
 
     raw_markdown = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
+    memory_audit_block = raw_markdown.split("<<PLAN_MARKDOWN>>", 1)[0].strip()
     plan_text = extract_between(raw_markdown, "<<PLAN_MARKDOWN>>", "<<END_PLAN>>")
     memory_snippet = extract_between(raw_markdown, "<<MEMORY_SNIPPET>>", "<<END_MEMORY>>")
 
     formatted_markdown = format_weekly_plan(plan_text)
+    if memory_audit_block:
+        formatted_markdown = f"{memory_audit_block}\n\n{formatted_markdown}"
     plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
 
     plan_path = save_weekly_plan(

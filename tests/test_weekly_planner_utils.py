@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.agent.weekly_planner import format_weekly_plan, save_weekly_plan
+from src.agent.weekly_planner import build_weekly_planner_prompt
 
 
 def test_format_weekly_plan_strips_whitespace():
@@ -59,3 +60,37 @@ def test_save_weekly_plan_uses_custom_filename(tmp_path: Path):
     assert path.name == "custom.md"
     assert path.exists()
     assert path.read_text(encoding="utf-8") == markdown.strip()
+
+
+def test_build_weekly_planner_prompt_includes_memory_audit_when_used():
+    system_prompt, _ = build_weekly_planner_prompt(
+        goal="Test goal",
+        time_per_week_hours=2.0,
+        max_session_minutes=30,
+        preferences=None,
+        memory_context="Some prior memory content",
+        memory_used=True,
+        memory_source="docs/memory.md",
+        memory_char_count=123,
+    )
+
+    assert "MEMORY_AUDIT (must be echoed exactly at the very top of the output):" in system_prompt
+    assert "Memory used: YES" in system_prompt
+    assert "Memory source: docs/memory.md" in system_prompt
+    assert "Memory characters injected: 123" in system_prompt
+
+
+def test_build_weekly_planner_prompt_includes_memory_audit_when_not_used():
+    system_prompt, _ = build_weekly_planner_prompt(
+        goal="Test goal",
+        time_per_week_hours=2.0,
+        max_session_minutes=30,
+        preferences=None,
+        memory_context="No memory content",
+        memory_used=False,
+        memory_source="docs/memory.md",
+        memory_char_count=0,
+    )
+
+    assert "Memory used: NO" in system_prompt
+    assert "Memory characters injected: 0" in system_prompt
