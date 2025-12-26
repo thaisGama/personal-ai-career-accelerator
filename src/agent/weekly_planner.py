@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 
 from openai import OpenAI
 
-from memory.vector_store import LocalVectorStore
+from .memory.vector_store import LocalVectorStore
 
 DEFAULT_MODEL = os.getenv("PLANNER_MODEL", "gpt-4o-mini")
 MAX_TOKENS = int(os.getenv("PLANNER_MAX_TOKENS", "1800"))
@@ -379,12 +379,12 @@ def generate_and_save_week(
     linkedin_path = posts_dir / f"linkedin_week_{date.today().isoformat()}.md"
     linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
 
-    memory_path = None
     if memory_snippet:
+        memory_path = append_memory_snippet(memory_snippet, path=memory_path)
         store.add(
-        text=memory_snippet.strip(),
-        meta={"date": date.today().isoformat(), "goal": goal},
-    )
+            text=memory_snippet.strip(),
+            meta={"date": date.today().isoformat(), "goal": goal},
+        )
         print(f"Weekly plan saved to {plan_path}")
         print(f"Memory updated at {memory_path}")
     else:
