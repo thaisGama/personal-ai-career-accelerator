@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
 from openai import OpenAI
+
+from .memory.vector_store import LocalVectorStore
 
 DEFAULT_MODEL = os.getenv("PLANNER_MODEL", "gpt-4o-mini")
 MAX_TOKENS = int(os.getenv("PLANNER_MAX_TOKENS", "1800"))
@@ -224,7 +226,8 @@ def save_weekly_plan(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     if filename is None:
-        filename = f"week_plan_{date.today().isoformat()}.md"
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"week_plan_{ts}.md"
 
     path = target_dir / filename
     path.write_text(markdown.strip(), encoding="utf-8")
@@ -300,8 +303,9 @@ def save_week_files(
     plan_dir.mkdir(parents=True, exist_ok=True)
     posts_dir.mkdir(parents=True, exist_ok=True)
 
-    plan_path = plan_dir / f"week_{today_str}_plan.md"
-    linkedin_path = posts_dir / f"linkedin_week_{today_str}.md"
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    plan_path = plan_dir / f"week_{ts}_plan.md"
+    linkedin_path = posts_dir / f"linkedin_week_{ts}.md"
 
     plan_path.write_text(plan_markdown.strip(), encoding="utf-8")
     linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
@@ -319,20 +323,30 @@ def generate_and_save_week(
 ) -> dict:
     """High-level orchestrator that builds prompts, calls the LLM, splits, and saves files."""
     memory_path = Path(base_dir) / "docs" / "memory.md"
-    memory_text = read_recent_memory(path=memory_path)
-    memory_used = bool(memory_text and memory_text.strip())
-    memory_char_count = len(memory_text) if memory_used else 0
-    memory_source = memory_path.as_posix()
+    memory_source = (Path(base_dir) / "data" / "memory_vectors.json").as_posix()
 
+    store = LocalVectorStore(path=Path(base_dir) / "data" / "memory_vectors.json")
 
-    if memory_text:
+    query_text = f"{goal}\npreferences: {preferences or ''}"
+    results = store.search(query_text, top_k=5)
+
+    if results:
+        # Use only relevant memories
+        snippets = []
+        for score, item in results:
+            snippets.append(f"- (score={score:.3f}) {item.text.strip()}")
         memory_context = (
-            "Here is a summary of what the user has done and planned in previous weeks.\n"
-            "Use this to avoid repeating tasks and to propose logical next steps.\n\n"
-            f"{memory_text}\n"
+            "Top relevant notes from past weeks (semantic search):\n"
+            + "\n".join(snippets)
+            + "\n"
         )
+        memory_used = True
+        memory_char_count = len(memory_context)
     else:
-        memory_context = "There is no past memory yet. Plan as if this is the first week.\n"
+        # Fallback: first-week behavior
+        memory_context = "There is no relevant past memory yet. Plan as if this is the first week.\n"
+        memory_used = False
+        memory_char_count = 0
 
     system_prompt, user_prompt = build_weekly_planner_prompt(
         goal=goal,
@@ -365,10 +379,11 @@ def generate_and_save_week(
     linkedin_path = posts_dir / f"linkedin_week_{date.today().isoformat()}.md"
     linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
 
-    memory_path = None
     if memory_snippet:
-        memory_path = append_memory_snippet(
-            memory_snippet, path=Path(base_dir) / "docs" / "memory.md"
+        memory_path = append_memory_snippet(memory_snippet, path=memory_path)
+        store.add(
+            text=memory_snippet.strip(),
+            meta={"date": date.today().isoformat(), "goal": goal},
         )
         print(f"Weekly plan saved to {plan_path}")
         print(f"Memory updated at {memory_path}")
@@ -392,7 +407,7 @@ def format_summary(plan_path: Path, linkedin_path: Path) -> str:
 
 
 if __name__ == "__main__":
-    example_goal = "Modern AI foundations + build my first agent"
+    example_goal = "continue agent workflow + embeddings"
     try:
         result = generate_and_save_week(
             goal=example_goal,

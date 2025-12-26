@@ -211,3 +211,4 @@ weekly_plans/
 docs/
 posts/
 *.csv
+data/*
