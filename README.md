@@ -156,3 +156,11 @@ Planned future features:
 Week 1 in progress.  
 Planner Agent v0.1 under development.
 
+---
+
+## 🧭 Learning Check (Quiz) v0.1
+- Run `streamlit run app.py` (with `OPENAI_API_KEY` set), open the **Learning Check** section, enter a topic and optional notes, then click **Generate quiz**.
+- Paste your answers in the UI and click **Evaluate answers** to get a mastery score and move-on recommendation. Results are saved under `docs/quizzes/`.
+- Click **Append to memory.md** to drop the evaluation into `docs/memory.md` for future context.
+- The quiz UI now shows only questions by default; rubric is in an expander and answers stay locked until you evaluate (or manually unlock).
+- CLI smoke test: `python scripts/run_learning_check.py` (requires `OPENAI_API_KEY`).
