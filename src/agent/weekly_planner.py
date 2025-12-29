@@ -148,7 +148,12 @@ The user is a working parent with limited energy. Suggest a realistic plan that 
     return system_prompt, user_prompt
 
 
-def call_llm(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL) -> str:
+def call_llm(
+    system_prompt: str,
+    user_prompt: str,
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.5,
+) -> str:
     """Call OpenAI's chat completions API and return the assistant markdown string."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -163,7 +168,7 @@ def call_llm(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL) -
                 {"role": "user", "content": user_prompt},
             ],
             max_tokens=MAX_TOKENS,
-            temperature=0.5,
+            temperature=temperature,
         )
     except Exception as exc:  # pragma: no cover - network/API path
         raise RuntimeError(f"Failed to call OpenAI chat completion: {exc}") from exc

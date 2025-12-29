@@ -1,10 +1,11 @@
-import re
+import json
 import re
 from pathlib import Path
 
 import streamlit as st
 
 import src.agent.learning_check as learning_check
+import src.agent.react_agent as react_agent
 import src.agent.weekly_planner as weekly_planner
 
 
@@ -127,8 +128,40 @@ def ensure_data_dir():
     return data_dir
 
 
-def run_planner(goal: str, hours_per_week: float, max_session_minutes: int, preferences: str, model: str):
+def run_planner(
+    goal: str,
+    hours_per_week: float,
+    max_session_minutes: int,
+    preferences: str,
+    model: str,
+    use_agent: bool,
+    mock_actions_path: str | None,
+):
     ensure_data_dir()
+
+    if use_agent:
+        preferences_payload = {"text": preferences or ""}
+        mock_path = Path(mock_actions_path) if mock_actions_path else None
+        result = react_agent.run_weekly_planner_agent_react(
+            goal=goal,
+            hours_per_week=hours_per_week,
+            max_session_minutes=max_session_minutes,
+            preferences=preferences_payload,
+            model=model,
+            base_dir=BASE_DIR,
+            mock_actions_path=mock_path,
+        )
+        plan_path_str = result.get("weekly_plan_path") or result.get("plan_path", "")
+        linkedin_path_str = result.get("linkedin_path", "")
+        plan_path = Path(plan_path_str) if plan_path_str else None
+        linkedin_path = Path(linkedin_path_str) if linkedin_path_str else None
+        plan_md = plan_path.read_text(encoding="utf-8") if plan_path and plan_path.is_file() else ""
+        linkedin_md = (
+            linkedin_path.read_text(encoding="utf-8") if linkedin_path and linkedin_path.is_file() else ""
+        )
+        if plan_path:
+            result["plan_path"] = plan_path.as_posix()
+        return result, plan_md, linkedin_md
 
     result = weekly_planner.generate_and_save_week(
         goal=goal,
@@ -207,6 +240,23 @@ with st.sidebar:
     planner_model = st.text_input(
         "Model", value=getattr(weekly_planner, "DEFAULT_MODEL", "gpt-4.1-mini"), key="planner_model"
     )
+    use_agent_loop = st.checkbox(
+        "Use agent loop (multi-step)",
+        value=st.session_state.get("planner_use_agent", False),
+        key="planner_use_agent",
+    )
+    use_mock_actions = st.checkbox(
+        "Mock agent (use fixtures)",
+        value=st.session_state.get("planner_use_mock", False),
+        key="planner_use_mock",
+        disabled=not use_agent_loop,
+    )
+    mock_actions_path = st.text_input(
+        "Mock actions path",
+        value=st.session_state.get("planner_mock_path", "tests/fixtures/react_actions.jsonl"),
+        key="planner_mock_path",
+        disabled=not use_agent_loop,
+    )
 
     col1, col2 = st.columns(2)
     generate = col1.button("Generate plan", type="primary", use_container_width=True)
@@ -225,12 +275,15 @@ if clear:
 
 if generate:
     with st.spinner("Generating..."):
+        effective_mock_path = mock_actions_path if use_agent_loop and use_mock_actions else None
         result, plan_md, linkedin_md = run_planner(
             goal=goal,
             hours_per_week=hours_per_week,
             max_session_minutes=max_session_minutes,
             preferences=preferences,
             model=planner_model,
+            use_agent=use_agent_loop,
+            mock_actions_path=effective_mock_path,
         )
 
     st.session_state["planner_result"] = result
@@ -270,11 +323,37 @@ with planner_tab:
             st.write(f"**Plan:** `{result.get('plan_path')}`")
             st.write(f"**LinkedIn:** `{result.get('linkedin_path')}`")
             st.write(f"**Memory:** `{result.get('memory_path')}`")
+            if result.get("next_task"):
+                st.write(f"**Next task:** {result.get('next_task')}")
+            if result.get("trace_path"):
+                st.write(f"**Trace:** `{result.get('trace_path')}`")
+                trace_path = Path(result.get("trace_path"))
+                if trace_path.exists():
+                    trace_data = None
+                    try:
+                        trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        trace_data = None
+                    if not result.get("weekly_plan_path") and trace_data:
+                        if any(entry.get("tool_name") == "format_failure" for entry in trace_data):
+                            st.error("Controller output was not valid JSON. See trace file.")
+                    with st.expander("Recent trace steps"):
+                        try:
+                            if trace_data is None:
+                                trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+                            for entry in trace_data[-3:]:
+                                st.write(
+                                    f"{entry.get('step_name')} | {entry.get('tool_name')} | "
+                                    f"{entry.get('tool_output_summary')}"
+                                )
+                        except Exception:
+                            st.caption("Could not read trace details.")
 
             st.divider()
             st.subheader("Memory quick view")
-            memory_path = Path(result.get("memory_path", BASE_DIR / "docs" / "memory.md"))
-            if memory_path.exists():
+            raw_memory_path = result.get("memory_path")
+            memory_path = Path(raw_memory_path) if raw_memory_path else (BASE_DIR / "docs" / "memory.md")
+            if memory_path.is_file():
                 with st.expander("Show tail of memory.md"):
                     txt = memory_path.read_text(encoding="utf-8")
                     st.code(txt[-1500:])
