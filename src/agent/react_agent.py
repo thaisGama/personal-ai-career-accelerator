@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -14,12 +14,16 @@ from .tools import (
     tool_generate_weekly_plan,
     tool_retrieve_memory,
     tool_save_outputs,
+    tool_summarize_task_progress,
+    tool_upsert_tasks_from_plan,
 )
 from .weekly_planner import DEFAULT_MODEL, call_llm
 
 TOOL_DISPATCH = {
     "retrieve_memory": tool_retrieve_memory,
+    "summarize_task_progress": tool_summarize_task_progress,
     "generate_weekly_plan": tool_generate_weekly_plan,
+    "upsert_tasks_from_plan": tool_upsert_tasks_from_plan,
     "save_outputs": tool_save_outputs,
     "decide_next_task": tool_decide_next_task,
 }
@@ -40,9 +44,14 @@ class AgentStepTrace:
 def _summarize_output(step_name: str, output: Dict[str, Any]) -> str:
     if step_name in {"retrieve_memory", "tool_retrieve_memory"}:
         return f"memory_used={output.get('audit', {}).get('memory_used')} hits={len(output.get('memory_hits', []))}"
+    if step_name in {"summarize_task_progress", "tool_summarize_task_progress"}:
+        counts = output.get("counts_by_status", {})
+        return f"tasks={sum(counts.values())} needs_review={counts.get('NEEDS_REVIEW', 0)}"
     if step_name in {"generate_plan", "generate_weekly_plan", "tool_generate_weekly_plan"}:
         plan_len = len(output.get("weekly_plan_md", ""))
         return f"generated plan chars={plan_len}"
+    if step_name in {"upsert_tasks_from_plan", "tool_upsert_tasks_from_plan"}:
+        return f"created={output.get('created_count')} updated={output.get('updated_count')}"
     if step_name in {"save_outputs", "tool_save_outputs"}:
         return f"saved plan={output.get('weekly_plan_path')} linkedin={output.get('linkedin_path')}"
     if step_name in {"decide_next_task", "tool_decide_next_task"}:
@@ -91,12 +100,21 @@ def run_weekly_planner_agent_fixed(
     record(step_name="understand_goal", tool_name="internal", tool_input=goal_payload, tool_output=goal_payload)
 
     store = LocalVectorStore(path=base_path / "data" / "memory_vectors.json")
+    tasks_path = base_path / "data" / "tasks.csv"
     memory_output = tool_retrieve_memory(goal=goal, preferences=preferences_payload, store=store, k=8)
     record(
         step_name="retrieve_memory",
         tool_name="tool_retrieve_memory",
         tool_input={"goal": goal, "preferences": preferences_payload, "k": 8},
         tool_output=memory_output,
+    )
+
+    tasks_summary = tool_summarize_task_progress(tasks_path=tasks_path)
+    record(
+        step_name="summarize_task_progress",
+        tool_name="tool_summarize_task_progress",
+        tool_input={"tasks_path": tasks_path.as_posix()},
+        tool_output=tasks_summary,
     )
 
     plan_output = tool_generate_weekly_plan(
@@ -108,6 +126,7 @@ def run_weekly_planner_agent_fixed(
         audit=memory_output.get("audit", {}),
         model=model,
         base_dir=base_path,
+        task_progress=tasks_summary,
     )
     record(
         step_name="generate_plan",
@@ -120,6 +139,19 @@ def run_weekly_planner_agent_fixed(
             "model": model,
         },
         tool_output=plan_output,
+    )
+
+    upsert_output = tool_upsert_tasks_from_plan(
+        plan_md=plan_output.get("weekly_plan_md", ""),
+        tasks_path=tasks_path,
+        source_week=date.today().isoformat(),
+        default_priority=3,
+    )
+    record(
+        step_name="upsert_tasks_from_plan",
+        tool_name="tool_upsert_tasks_from_plan",
+        tool_input={"tasks_path": tasks_path.as_posix()},
+        tool_output=upsert_output,
     )
 
     save_output = tool_save_outputs(
@@ -200,7 +232,9 @@ def build_react_controller_prompt(
     """Build system and user prompts for the ReAct controller."""
     tools_desc = (
         "- retrieve_memory: find relevant past memory; no file paths needed.\n"
+        "- summarize_task_progress: load tasks.csv summary for planner context.\n"
         "- generate_weekly_plan: generate plan content from goal and memory.\n"
+        "- upsert_tasks_from_plan: parse plan markdown and update tasks.csv.\n"
         "- save_outputs: save plan and LinkedIn draft to disk.\n"
         "- decide_next_task: pick next task from the plan."
     )
@@ -212,20 +246,27 @@ def build_react_controller_prompt(
         "Allowed actions:\n"
         '{ "action": "tool", "tool_name": "...", "args": { ... } }\n'
         '{ "action": "final", "result": { ... } }\n'
-        "Tool names: retrieve_memory, generate_weekly_plan, save_outputs, decide_next_task.\n"
+        "Tool names: retrieve_memory, summarize_task_progress, generate_weekly_plan, "
+        "upsert_tasks_from_plan, save_outputs, decide_next_task.\n"
         "Decide the next tool call based on the state and last observation.\n"
         "Only call tools. Do not generate the weekly plan directly.\n"
         "POLICY (must follow this priority order):\n"
-        "1) If has_saved_paths == true AND has_next_task == true: ALWAYS return "
+        "1) If memory_attempted == True: NEVER call retrieve_memory again in this run.\n"
+        "2) If memory_attempted == False AND has_memory_context == False: call retrieve_memory ONCE.\n"
+        "3) If memory_hits == 0: proceed to summarize_task_progress or generate_weekly_plan; "
+        "do NOT retry memory.\n"
+        "4) If has_saved_paths == true AND has_next_task == true: ALWAYS return "
         '{"action":"final","result":{}}.\n'
-        "2) Otherwise choose exactly ONE tool in this order:\n"
-        "   a) If has_memory_context == false -> retrieve_memory\n"
-        "   b) Else if has_weekly_plan_md == false -> generate_weekly_plan\n"
-        "   c) Else if has_saved_paths == false -> save_outputs\n"
-        "   d) Else if has_next_task == false -> decide_next_task\n"
-        "   e) Else -> final\n"
-        "3) Never repeat a tool if the state shows it already succeeded.\n"
-        "4) Output ONLY one JSON object. No prose. No markdown.\n"
+        "5) Otherwise choose exactly ONE tool in this order:\n"
+        "   a) If memory_attempted == false -> retrieve_memory\n"
+        "   b) Else if has_task_summary == false -> summarize_task_progress\n"
+        "   c) Else if has_weekly_plan_md == false -> generate_weekly_plan\n"
+        "   d) Else if has_tasks_upserted == false -> upsert_tasks_from_plan\n"
+        "   e) Else if has_saved_paths == false -> save_outputs\n"
+        "   f) Else if has_next_task == false -> decide_next_task\n"
+        "   g) Else -> final\n"
+        "6) Never repeat a tool if the state shows it already succeeded.\n"
+        "7) Output ONLY one JSON object. No prose. No markdown.\n"
         "Example tool action: {\"action\":\"tool\",\"tool_name\":\"retrieve_memory\",\"args\":{\"k\":8}}\n"
         "Example final action: {\"action\":\"final\",\"result\":{\"weekly_plan_path\":\"...\"}}\n"
     )
@@ -240,10 +281,17 @@ def build_react_controller_prompt(
         "STATE SUMMARY\n"
         f"- memory_used: {state.get('memory_used')}\n"
         f"- memory_snippets_count: {state.get('memory_snippets_count')}\n"
-        f"- has_memory_context: {bool(state.get('memory_context'))}\n"
+        f"- memory_attempted: {state.get('memory_attempted')}\n"
+        f"- memory_hits: {state.get('memory_hits')}\n"
+        f"- has_memory_context: {state.get('has_memory_context')}\n"
+        f"- has_task_summary: {bool(state.get('task_progress_summary'))}\n"
         f"- has_weekly_plan_md: {bool(state.get('weekly_plan_md'))}\n"
+        f"- has_tasks_upserted: {bool(state.get('tasks_upserted'))}\n"
         f"- has_saved_paths: {bool(state.get('weekly_plan_path') and state.get('linkedin_path'))}\n"
         f"- has_next_task: {bool(state.get('next_task'))}\n\n"
+        f"- open_tasks_count: {state.get('open_tasks_count', 0)}\n"
+        f"- needs_review_count: {state.get('needs_review_count', 0)}\n"
+        f"- weak_topics: {state.get('weak_topics', [])}\n\n"
         "LAST OBSERVATION\n"
         f"{last_observation}\n\n"
         "RESPONSE FORMAT\n"
@@ -335,8 +383,13 @@ def _summarize_observation(tool_name: str, output: Dict[str, Any], state: Dict[s
     if tool_name == "retrieve_memory":
         audit = output.get("audit", {})
         return f"memory_used={audit.get('memory_used')} snippets={audit.get('memory_snippets_count')}"
+    if tool_name == "summarize_task_progress":
+        counts = output.get("counts_by_status", {})
+        return f"open_tasks={sum(counts.values())} needs_review={counts.get('NEEDS_REVIEW', 0)}"
     if tool_name == "generate_weekly_plan":
         return f"weekly_plan_md_len={len(output.get('weekly_plan_md', ''))}"
+    if tool_name == "upsert_tasks_from_plan":
+        return f"created={output.get('created_count')} updated={output.get('updated_count')}"
     if tool_name == "save_outputs":
         return f"weekly_plan_path={output.get('weekly_plan_path')} linkedin_path={output.get('linkedin_path')}"
     if tool_name == "decide_next_task":
@@ -344,7 +397,7 @@ def _summarize_observation(tool_name: str, output: Dict[str, Any], state: Dict[s
     return f"state_keys={sorted(state.keys())}"
 
 
-def _safe_final_result(state: Dict[str, Any]) -> Dict[str, Any]:
+def _safe_final_result(state: Dict[str, Any], final_reason: str = "success") -> Dict[str, Any]:
     return {
         "weekly_plan_path": state.get("weekly_plan_path"),
         "linkedin_path": state.get("linkedin_path"),
@@ -352,6 +405,7 @@ def _safe_final_result(state: Dict[str, Any]) -> Dict[str, Any]:
         "memory_used": state.get("memory_used", False),
         "memory_snippets_count": state.get("memory_snippets_count", 0),
         "memory_path": state.get("memory_path", ""),
+        "final_reason": final_reason,
     }
 
 
@@ -362,11 +416,12 @@ def run_weekly_planner_agent_react(
     preferences: Dict[str, Any],
     model: str,
     base_dir: Path,
-    max_steps: int = 8,
+    max_steps: int = 10,
     mock_actions_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a ReAct-style tool-calling loop and persist a trace JSON file."""
     base_path = Path(base_dir)
+    max_steps = max(max_steps, 6)
     traces: List[AgentStepTrace] = []
     trace_dir = base_path / "data" / "traces"
     trace_dir.mkdir(parents=True, exist_ok=True)
@@ -397,6 +452,9 @@ def run_weekly_planner_agent_react(
         "memory_context": "",
         "memory_used": False,
         "memory_snippets_count": 0,
+        "memory_attempted": False,
+        "memory_hits": 0,
+        "has_memory_context": False,
         "weekly_plan_md": "",
         "linkedin_post_md": "",
         "memory_snippet": "",
@@ -404,8 +462,15 @@ def run_weekly_planner_agent_react(
         "linkedin_path": "",
         "memory_path": "",
         "next_task": "",
+        "tasks_path": (base_path / "data" / "tasks.csv").as_posix(),
+        "task_progress_summary": {},
+        "tasks_upserted": False,
+        "open_tasks_count": 0,
+        "needs_review_count": 0,
+        "weak_topics": [],
     }
     last_observation = "No previous tool calls."
+    final_reason = "success"
 
     mock_actions: List[str] = _load_mock_actions(mock_actions_path) if mock_actions_path else []
     mock_index = 0
@@ -425,15 +490,22 @@ def run_weekly_planner_agent_react(
         )
 
     # Termination is decided by the controller policy, not the loop.
+    finished = False
     for _ in range(max_steps):
         if same_tool_count >= 3:
-            record(
-                step_name="controller",
-                tool_name="safety_stop",
-                tool_input={"reason": "same_tool_three_times"},
-                tool_output={"action": "final", "result": _safe_final_result(state)},
-            )
-            break
+            if last_tool_name == "retrieve_memory" and state.get("memory_hits", 0) == 0:
+                same_tool_count = 0
+                last_tool_name = ""
+            else:
+                final_reason = "exception"
+                record(
+                    step_name="controller",
+                    tool_name="safety_stop",
+                    tool_input={"reason": "same_tool_three_times"},
+                    tool_output={"action": "final", "result": _safe_final_result(state, final_reason)},
+                )
+                finished = True
+                break
 
         system_prompt, user_prompt = build_react_controller_prompt(
             goal=goal,
@@ -478,32 +550,75 @@ def run_weekly_planner_agent_react(
                 )
                 if not mock_actions:
                     system_prompt = (
-                        "You must return one valid JSON object only. No markdown or prose. Fix the response."
+                        "Return ONLY valid JSON matching the schema. No markdown or prose."
                     )
-                    user_prompt = f"Invalid response error: {error}\nReturn a valid JSON object now."
+                    user_prompt = (
+                        "Schema: {\"action\":\"tool\",\"tool_name\":\"...\",\"args\":{...}} or "
+                        "{\"action\":\"final\",\"result\":{...}}.\n"
+                        f"Invalid response error: {error}\nReturn a valid JSON object now."
+                    )
             retries += 1
 
         if action is None:
             record(
                 step_name="controller",
-                tool_name="format_failure",
+                tool_name="parse_error",
                 tool_input={"raw_response": raw_action, "error": error},
-                tool_output={"action": "final", "result": _safe_final_result(state)},
+                tool_output={"action": "invalid"},
             )
-            break
+            if not state.get("weekly_plan_md"):
+                action = {"action": "tool", "tool_name": "generate_weekly_plan", "args": {}}
+            else:
+                final_reason = "parse_error"
+                record(
+                    step_name="controller",
+                    tool_name="safety_stop",
+                    tool_input={"reason": "parse_error"},
+                    tool_output={"action": "final", "result": _safe_final_result(state, final_reason)},
+                )
+                finished = True
+                break
+
+        override_reason = ""
+        if action.get("action") == "final" and not state.get("weekly_plan_md"):
+            action = {"action": "tool", "tool_name": "generate_weekly_plan", "args": {}}
+            override_reason = "final_before_plan"
+        if (
+            action.get("action") == "tool"
+            and action.get("tool_name") == "retrieve_memory"
+            and state.get("memory_attempted")
+        ):
+            next_tool = "summarize_task_progress"
+            if state.get("task_progress_summary"):
+                next_tool = "generate_weekly_plan"
+            action = {"action": "tool", "tool_name": next_tool, "args": {}}
+            override_reason = "memory_no_hits" if state.get("memory_hits", 0) == 0 else "memory_already_attempted"
 
         record(
             step_name="controller",
             tool_name="controller",
-            tool_input={"prompt_state": _summarize_observation("controller", {}, state)},
-            tool_output={"action": action},
+            tool_input={
+                "prompt_state": _summarize_observation("controller", {}, state),
+                "memory_attempted": state.get("memory_attempted"),
+                "memory_hits": state.get("memory_hits"),
+            },
+            tool_output={
+                "action": action,
+                "chosen_tool": action.get("tool_name") if action.get("action") == "tool" else "final",
+                "controller_raw": raw_action,
+                "parse_error": error,
+                "override": bool(override_reason),
+                "override_reason": override_reason or None,
+            },
         )
 
         if action.get("action") == "final":
             result = action.get("result", {})
-            final = _safe_final_result(state)
+            final_reason = "success"
+            final = _safe_final_result(state, final_reason)
             final.update({k: v for k, v in result.items() if v})
             state.update(final)
+            finished = True
             break
 
         tool_name = action.get("tool_name")
@@ -521,6 +636,18 @@ def run_weekly_planner_agent_react(
             audit = output.get("audit", {})
             state["memory_used"] = audit.get("memory_used", False)
             state["memory_snippets_count"] = audit.get("memory_snippets_count", 0)
+            state["memory_attempted"] = True
+            state["memory_hits"] = int(audit.get("memory_snippets_count", 0))
+            state["has_memory_context"] = bool(state.get("memory_context"))
+        elif tool_name == "summarize_task_progress":
+            tasks_path = Path(state.get("tasks_path"))
+            output = tool_summarize_task_progress(tasks_path=tasks_path)
+            state["task_progress_summary"] = output
+            counts = output.get("counts_by_status", {})
+            open_count = sum(counts.get(status, 0) for status in ("TODO", "IN_PROGRESS", "NEEDS_REVIEW"))
+            state["open_tasks_count"] = open_count
+            state["needs_review_count"] = counts.get("NEEDS_REVIEW", 0)
+            state["weak_topics"] = output.get("weak_topics", [])
         elif tool_name == "generate_weekly_plan":
             output = tool_generate_weekly_plan(
                 goal=goal,
@@ -534,10 +661,20 @@ def run_weekly_planner_agent_react(
                 },
                 model=model,
                 base_dir=base_path,
+                task_progress=state.get("task_progress_summary"),
             )
             state["weekly_plan_md"] = output.get("weekly_plan_md", "")
             state["linkedin_post_md"] = output.get("linkedin_post_md", "")
             state["memory_snippet"] = output.get("memory_snippet", "")
+            state["tasks_upserted"] = False
+        elif tool_name == "upsert_tasks_from_plan":
+            output = tool_upsert_tasks_from_plan(
+                plan_md=state.get("weekly_plan_md", ""),
+                tasks_path=Path(state.get("tasks_path")),
+                source_week=date.today().isoformat(),
+                default_priority=3,
+            )
+            state["tasks_upserted"] = True
         elif tool_name == "save_outputs":
             output = tool_save_outputs(
                 base_dir=base_path,
@@ -570,6 +707,8 @@ def run_weekly_planner_agent_react(
     trace_payload = [_trace_to_dict(t) for t in traces]
     trace_path.write_text(json.dumps(trace_payload, ensure_ascii=True, indent=2), encoding="utf-8")
 
-    final_result = _safe_final_result(state)
+    if not finished:
+        final_reason = "max_steps"
+    final_result = _safe_final_result(state, final_reason)
     final_result["trace_path"] = trace_path.as_posix()
     return final_result

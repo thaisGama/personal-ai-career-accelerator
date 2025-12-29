@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 from openai import OpenAI
 
 from .memory.vector_store import LocalVectorStore
+from .task_store import TaskProgressSummary, summarize_task_progress, upsert_tasks_from_plan
 
 DEFAULT_MODEL = os.getenv("PLANNER_MODEL", "gpt-4o-mini")
 MAX_TOKENS = int(os.getenv("PLANNER_MAX_TOKENS", "1800"))
@@ -24,6 +25,7 @@ def build_weekly_planner_prompt(
     memory_used: bool,
     memory_source: str,
     memory_char_count: int,
+    task_progress: TaskProgressSummary | None = None,
 ) -> Tuple[str, str]:
     """Construct system and user prompts for the weekly planner agent."""
     system_prompt = """You are an AI Weekly Learning Planner. Generate a clean, motivating weekly plan that fits into 10–30 minute sessions. Return only raw Markdown (no code fences).
@@ -96,6 +98,11 @@ Scope:
 - <bullet 2>
 - <bullet 3>
 
+✅ Next Actions
+- <action 1>
+- <action 2>
+- <action 3>
+
 💬 LinkedIn Post Template
 <one paragraph the user can adapt and post on LinkedIn>
 
@@ -128,6 +135,33 @@ STYLE RULES:
         MEMORY_CHAR_COUNT=memory_char_count,
     )
 
+    task_block = ""
+    if task_progress:
+        open_tasks = task_progress.open_tasks[:5]
+        open_lines = []
+        for task in open_tasks:
+            open_lines.append(
+                f"- {task.get('title')} (id={task.get('task_id')}, "
+                f"status={task.get('status')}, priority={task.get('priority')}, "
+                f"evidence={task.get('evidence_score')})"
+            )
+        weak_topics = ", ".join(task_progress.weak_topics) if task_progress.weak_topics else "None"
+        completed = (
+            "\n".join([f"- {title}" for title in task_progress.completed_last_week])
+            if task_progress.completed_last_week
+            else "None"
+        )
+        task_block = (
+            "\n=== TASK PROGRESS (tasks.csv) ===\n"
+            "Open tasks (top 5):\n"
+            + ("\n".join(open_lines) if open_lines else "None")
+            + "\nWeak topics:\n"
+            + weak_topics
+            + "\nTasks completed last week:\n"
+            + completed
+            + "\n=== END TASK PROGRESS ===\n"
+        )
+
     user_prompt = f"""Goal for the week: {goal}
 Time available per week: {time_per_week_hours} hours
 Max session length: {max_session_minutes} minutes
@@ -142,6 +176,9 @@ You are planning a new learning week for the user. You are given some memory fro
 === CONTEXT FROM PAST WEEKS ===
 {memory_context}
 === END CONTEXT ===
+{task_block}
+
+Use tasks.csv to avoid repeating tasks already marked DONE. Prefer NEEDS_REVIEW or IN_PROGRESS tasks when picking new work.
 
 The user is a working parent with limited energy. Suggest a realistic plan that fits into 10–30 minute focused blocks."""
 
@@ -353,6 +390,9 @@ def generate_and_save_week(
         memory_used = False
         memory_char_count = 0
 
+    tasks_path = Path(base_dir) / "data" / "tasks.csv"
+    task_progress = summarize_task_progress(tasks_path)
+
     system_prompt, user_prompt = build_weekly_planner_prompt(
         goal=goal,
         time_per_week_hours=time_per_week_hours,
@@ -362,6 +402,7 @@ def generate_and_save_week(
         memory_used=memory_used,
         memory_source=memory_source,
         memory_char_count=memory_char_count,
+        task_progress=task_progress,
     )
 
     raw_markdown = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
@@ -373,6 +414,13 @@ def generate_and_save_week(
     if memory_audit_block:
         formatted_markdown = f"{memory_audit_block}\n\n{formatted_markdown}"
     plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
+
+    upsert_tasks_from_plan(
+        plan_md=plan_markdown,
+        tasks_path=tasks_path,
+        source_week=date.today().isoformat(),
+        default_priority=3,
+    )
 
     plan_path = save_weekly_plan(
         markdown=plan_markdown,
