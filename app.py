@@ -1,10 +1,18 @@
+import json
 import re
-import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
 
 import src.agent.learning_check as learning_check
+import src.agent.react_agent as react_agent
+from src.agent.tools import (
+    tool_load_tasks,
+    tool_mark_done,
+    tool_select_quiz_tasks,
+    tool_update_tasks_from_quiz_results,
+)
 import src.agent.weekly_planner as weekly_planner
 
 
@@ -42,7 +50,7 @@ def parse_quiz_sections(text: str) -> dict:
     }
 
 
-def parse_questions(quiz_text: str) -> tuple[str | None, list[dict]]:
+def parse_questions(quiz_text: str, task_ids: list[str] | None = None) -> tuple[str | None, list[dict]]:
     """
     Parse quiz text into (title, questions).
     Each question dict: {id: int, prompt, options, type}
@@ -79,6 +87,7 @@ def parse_questions(quiz_text: str) -> tuple[str | None, list[dict]]:
 
     questions: list[dict] = []
     opt_pattern = re.compile(r"^\s*[-*•]?\s*([A-Z])\)\s*(.+)")
+    task_pattern = re.compile(r"\[task_id:([^\]]+)\]", flags=re.IGNORECASE)
 
     for block in question_blocks:
         if not block:
@@ -97,6 +106,11 @@ def parse_questions(quiz_text: str) -> tuple[str | None, list[dict]]:
             else:
                 prompt_parts.append(line.strip())
         prompt = "\n".join([p for p in prompt_parts if p]).strip()
+        task_id = None
+        task_match = task_pattern.search(prompt)
+        if task_match:
+            task_id = task_match.group(1).strip()
+            prompt = task_pattern.sub("", prompt).strip()
         lower_prompt = prompt.lower()
 
         if "true or false" in lower_prompt:
@@ -107,13 +121,19 @@ def parse_questions(quiz_text: str) -> tuple[str | None, list[dict]]:
         else:
             qtype = "open"
 
-        questions.append({"id": qid_num, "prompt": prompt, "options": options, "type": qtype})
+        questions.append({"id": qid_num, "prompt": prompt, "options": options, "type": qtype, "task_id": task_id})
 
     # Store timebox alongside title if available
     if timebox and title:
         title = f"{title} — {timebox}"
     elif timebox:
         title = timebox
+
+    if task_ids:
+        for idx, question in enumerate(questions):
+            if question.get("task_id"):
+                continue
+            question["task_id"] = task_ids[idx % len(task_ids)]
 
     return title, questions
 
@@ -127,8 +147,49 @@ def ensure_data_dir():
     return data_dir
 
 
-def run_planner(goal: str, hours_per_week: float, max_session_minutes: int, preferences: str, model: str):
+def append_quiz_results(results: list[dict], base_dir: Path) -> Path:
+    data_dir = ensure_data_dir()
+    path = data_dir / "quiz_results.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        for entry in results:
+            handle.write(json.dumps(entry, ensure_ascii=True) + "\n")
+    return path
+
+
+def run_planner(
+    goal: str,
+    hours_per_week: float,
+    max_session_minutes: int,
+    preferences: str,
+    model: str,
+    use_agent: bool,
+    mock_actions_path: str | None,
+):
     ensure_data_dir()
+
+    if use_agent:
+        preferences_payload = {"text": preferences or ""}
+        mock_path = Path(mock_actions_path) if mock_actions_path else None
+        result = react_agent.run_weekly_planner_agent_react(
+            goal=goal,
+            hours_per_week=hours_per_week,
+            max_session_minutes=max_session_minutes,
+            preferences=preferences_payload,
+            model=model,
+            base_dir=BASE_DIR,
+            mock_actions_path=mock_path,
+        )
+        plan_path_str = result.get("weekly_plan_path") or result.get("plan_path", "")
+        linkedin_path_str = result.get("linkedin_path", "")
+        plan_path = Path(plan_path_str) if plan_path_str else None
+        linkedin_path = Path(linkedin_path_str) if linkedin_path_str else None
+        plan_md = plan_path.read_text(encoding="utf-8") if plan_path and plan_path.is_file() else ""
+        linkedin_md = (
+            linkedin_path.read_text(encoding="utf-8") if linkedin_path and linkedin_path.is_file() else ""
+        )
+        if plan_path:
+            result["plan_path"] = plan_path.as_posix()
+        return result, plan_md, linkedin_md
 
     result = weekly_planner.generate_and_save_week(
         goal=goal,
@@ -207,6 +268,23 @@ with st.sidebar:
     planner_model = st.text_input(
         "Model", value=getattr(weekly_planner, "DEFAULT_MODEL", "gpt-4.1-mini"), key="planner_model"
     )
+    use_agent_loop = st.checkbox(
+        "Use agent loop (multi-step)",
+        value=st.session_state.get("planner_use_agent", False),
+        key="planner_use_agent",
+    )
+    use_mock_actions = st.checkbox(
+        "Mock agent (use fixtures)",
+        value=st.session_state.get("planner_use_mock", False),
+        key="planner_use_mock",
+        disabled=not use_agent_loop,
+    )
+    mock_actions_path = st.text_input(
+        "Mock actions path",
+        value=st.session_state.get("planner_mock_path", "tests/fixtures/react_actions.jsonl"),
+        key="planner_mock_path",
+        disabled=not use_agent_loop,
+    )
 
     col1, col2 = st.columns(2)
     generate = col1.button("Generate plan", type="primary", use_container_width=True)
@@ -225,12 +303,15 @@ if clear:
 
 if generate:
     with st.spinner("Generating..."):
+        effective_mock_path = mock_actions_path if use_agent_loop and use_mock_actions else None
         result, plan_md, linkedin_md = run_planner(
             goal=goal,
             hours_per_week=hours_per_week,
             max_session_minutes=max_session_minutes,
             preferences=preferences,
             model=planner_model,
+            use_agent=use_agent_loop,
+            mock_actions_path=effective_mock_path,
         )
 
     st.session_state["planner_result"] = result
@@ -270,11 +351,37 @@ with planner_tab:
             st.write(f"**Plan:** `{result.get('plan_path')}`")
             st.write(f"**LinkedIn:** `{result.get('linkedin_path')}`")
             st.write(f"**Memory:** `{result.get('memory_path')}`")
+            if result.get("next_task"):
+                st.write(f"**Next task:** {result.get('next_task')}")
+            if result.get("trace_path"):
+                st.write(f"**Trace:** `{result.get('trace_path')}`")
+                trace_path = Path(result.get("trace_path"))
+                if trace_path.exists():
+                    trace_data = None
+                    try:
+                        trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        trace_data = None
+                    if not result.get("weekly_plan_path") and trace_data:
+                        if any(entry.get("tool_name") == "format_failure" for entry in trace_data):
+                            st.error("Controller output was not valid JSON. See trace file.")
+                    with st.expander("Recent trace steps"):
+                        try:
+                            if trace_data is None:
+                                trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+                            for entry in trace_data[-6:]:
+                                st.write(
+                                    f"{entry.get('step_name')} | {entry.get('tool_name')} | "
+                                    f"{entry.get('tool_output_summary')}"
+                                )
+                        except Exception:
+                            st.caption("Could not read trace details.")
 
             st.divider()
             st.subheader("Memory quick view")
-            memory_path = Path(result.get("memory_path", BASE_DIR / "docs" / "memory.md"))
-            if memory_path.exists():
+            raw_memory_path = result.get("memory_path")
+            memory_path = Path(raw_memory_path) if raw_memory_path else (BASE_DIR / "docs" / "memory.md")
+            if memory_path.is_file():
                 with st.expander("Show tail of memory.md"):
                     txt = memory_path.read_text(encoding="utf-8")
                     st.code(txt[-1500:])
@@ -299,6 +406,7 @@ with quiz_tab:
             height=120,
             key="quiz_context",
         )
+        use_tasks = st.checkbox("Use tasks.csv", value=st.session_state.get("quiz_use_tasks", False), key="quiz_use_tasks")
         quiz_model = st.text_input(
             "Model", value=getattr(learning_check, "DEFAULT_MODEL", "gpt-4.1-mini"), key="quiz_model"
         )
@@ -319,6 +427,10 @@ with quiz_tab:
             "quiz_eval_decision",
             "quiz_unlocked",
             "quiz_answers_fallback",
+            "quiz_selected_tasks",
+            "quiz_task_ids",
+            "quiz_propose_done",
+            "quiz_task_statuses",
         ]:
             st.session_state.pop(key, None)
         # clear individual answer widgets
@@ -327,15 +439,39 @@ with quiz_tab:
                 st.session_state.pop(k)
         st.rerun()
 
+    selected_tasks = []
+    tasks_context = ""
+    task_ids = []
+    if use_tasks:
+        selection = tool_select_quiz_tasks(tasks_path=BASE_DIR / "data" / "tasks.csv", n=3)
+        selected_tasks = selection.get("selected_tasks", [])
+        task_ids = [task.get("task_id", "") for task in selected_tasks if task.get("task_id")]
+        st.session_state["quiz_selected_tasks"] = selected_tasks
+        st.session_state["quiz_task_ids"] = task_ids
+        if selected_tasks:
+            lines = [f"- {task.get('task_id')}: {task.get('title')} ({task.get('topic')})" for task in selected_tasks]
+            tasks_context = "Tasks for quiz:\n" + "\n".join(lines)
+            st.caption("Using tasks.csv to focus the quiz on open tasks.")
+        else:
+            st.warning("No open tasks found in tasks.csv. Quiz will use the topic instead.")
+    else:
+        st.session_state.pop("quiz_selected_tasks", None)
+        st.session_state.pop("quiz_task_ids", None)
+        st.session_state.pop("quiz_task_statuses", None)
+
     if generate_quiz:
         if not quiz_topic.strip():
             st.warning("Please provide a topic before generating a quiz.")
         else:
             with st.spinner("Generating quiz..."):
                 try:
+                    combined_context = quiz_context
+                    if tasks_context:
+                        combined_context = f"{combined_context}\n\n{tasks_context}".strip()
                     quiz_result = learning_check.generate_micro_quiz(
                         topic=quiz_topic,
-                        context_text=quiz_context,
+                        context_text=combined_context,
+                        tasks=selected_tasks if selected_tasks else None,
                         model=quiz_model,
                         base_dir=BASE_DIR,
                     )
@@ -354,7 +490,7 @@ with quiz_tab:
     sections = parse_quiz_sections(quiz_md) if quiz_md else {}
 
     if quiz_md and sections.get("quiz"):
-        title, questions = parse_questions(sections["quiz"])
+        title, questions = parse_questions(sections["quiz"], task_ids=st.session_state.get("quiz_task_ids"))
 
         st.markdown("### Quiz preview")
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -430,7 +566,7 @@ with quiz_tab:
     answers_payload = None
     questions_for_eval = []
     if quiz_md and sections.get("quiz"):
-        _, questions_for_eval = parse_questions(sections["quiz"])
+        _, questions_for_eval = parse_questions(sections["quiz"], task_ids=st.session_state.get("quiz_task_ids"))
         if questions_for_eval:
             payload_lines = []
             for q in questions_for_eval:
@@ -468,6 +604,36 @@ with quiz_tab:
                     st.session_state["quiz_eval_mastery"] = eval_result.get("mastery")
                     st.session_state["quiz_eval_decision"] = eval_result.get("move_on_decision")
                     st.session_state["quiz_unlocked"] = True
+                    if use_tasks and st.session_state.get("quiz_task_ids"):
+                        score = eval_result.get("score") or 0.0
+                        score_ratio = float(score) / 10.0
+                        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                        quiz_results = [
+                            {
+                                "task_id": task_id,
+                                "score": score_ratio,
+                                "notes": f"quiz_score={score_ratio:.2f} mastery={eval_result.get('mastery')}",
+                                "timestamp": timestamp,
+                            }
+                            for task_id in st.session_state.get("quiz_task_ids", [])
+                        ]
+                        update_result = tool_update_tasks_from_quiz_results(
+                            tasks_path=BASE_DIR / "data" / "tasks.csv",
+                            quiz_results=quiz_results,
+                            auto_close=False,
+                        )
+                        st.session_state["quiz_task_update"] = update_result
+                        st.session_state["quiz_propose_done"] = update_result.get("propose_done", [])
+                        tasks_payload = tool_load_tasks(path=BASE_DIR / "data" / "tasks.csv")
+                        status_map = {
+                            task.get("task_id"): task.get("status")
+                            for task in tasks_payload.get("tasks", [])
+                        }
+                        st.session_state["quiz_task_statuses"] = [
+                            (task_id, status_map.get(task_id, "UNKNOWN"))
+                            for task_id in st.session_state.get("quiz_task_ids", [])
+                        ]
+                        append_quiz_results(quiz_results, base_dir=BASE_DIR)
                 except Exception as exc:  # pragma: no cover - runtime path
                     st.error(f"Failed to evaluate answers: {exc}")
 
@@ -483,6 +649,17 @@ with quiz_tab:
             f"Score: {score if score is not None else 'n/a'} | "
             f"Mastery: {mastery or 'n/a'} | Move-on decision: {decision or 'n/a'}"
         )
+        task_update = st.session_state.get("quiz_task_update")
+        if task_update:
+            st.caption(
+                f"Task updates: {task_update.get('updated_count', 0)} "
+                f"(proposed DONE: {len(task_update.get('propose_done', []))})"
+            )
+            statuses = st.session_state.get("quiz_task_statuses", [])
+            if statuses:
+                st.markdown("Updated task statuses:")
+                for task_id, status in statuses:
+                    st.markdown(f"- `{task_id}` → **{status}**")
 
         if st.button("Append mastery to memory.md"):
             try:
@@ -492,6 +669,20 @@ with quiz_tab:
                 st.success(f"Appended mastery summary to `{memory_path}`")
             except Exception as exc:  # pragma: no cover - runtime path
                 st.error(f"Failed to append to memory: {exc}")
+        propose_done = st.session_state.get("quiz_propose_done", [])
+        if propose_done:
+            st.divider()
+            st.caption("Proposed DONE tasks (approve to mark complete):")
+            selected_done = []
+            for task_id in propose_done:
+                if st.checkbox(f"Mark {task_id} as DONE", key=f"done_{task_id}"):
+                    selected_done.append(task_id)
+            if st.button("Confirm DONE updates"):
+                if selected_done:
+                    result = tool_mark_done(tasks_path=BASE_DIR / "data" / "tasks.csv", task_ids=selected_done)
+                    st.success(f"Marked {result.get('updated_count', 0)} tasks as DONE.")
+                else:
+                    st.info("No tasks selected for DONE.")
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         if st.button("Unlock answers (manual)"):

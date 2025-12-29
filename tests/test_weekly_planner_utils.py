@@ -72,6 +72,7 @@ def test_build_weekly_planner_prompt_includes_memory_audit_when_used():
         memory_used=True,
         memory_source="docs/memory.md",
         memory_char_count=123,
+        task_progress=None,
     )
 
     assert "MEMORY_AUDIT (must be echoed exactly at the very top of the output):" in system_prompt
@@ -90,6 +91,7 @@ def test_build_weekly_planner_prompt_includes_memory_audit_when_not_used():
         memory_used=False,
         memory_source="docs/memory.md",
         memory_char_count=0,
+        task_progress=None,
     )
 
     assert "Memory used: NO" in system_prompt

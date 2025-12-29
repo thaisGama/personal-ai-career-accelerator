@@ -1,0 +1,5 @@
+{"action":"tool","tool_name":"retrieve_memory","args":{"k":8}}
+{"action":"tool","tool_name":"generate_weekly_plan","args":{}}
+{"action":"tool","tool_name":"save_outputs","args":{}}
+{"action":"tool","tool_name":"decide_next_task","args":{}}
+{"action":"final","result":{}}

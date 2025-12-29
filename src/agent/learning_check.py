@@ -78,15 +78,29 @@ def save_quiz_markdown(topic: str, quiz_markdown: str, base_dir: Path | str = ".
 def generate_micro_quiz(
     topic: str,
     context_text: Optional[str] = None,
+    tasks: Optional[list[dict]] = None,
     model: str = DEFAULT_MODEL,
     base_dir: Path | str = ".",
 ) -> Dict[str, object]:
     """
     Create a 5-question micro-quiz for the topic and save it.
     """
+    tasks_block = ""
+    if tasks:
+        lines = []
+        for task in tasks:
+            lines.append(f"- {task.get('task_id')}: {task.get('title')} ({task.get('topic')})")
+        tasks_block = (
+            "\nFocus the quiz on these tasks and include the TaskID tag in each question "
+            "like [task_id:XYZ]:\n"
+            + "\n".join(lines)
+            + "\n"
+        )
+
     user_prompt = (
         f"Topic: {topic.strip()}\n"
         f"Context/notes (may be empty):\n{context_text.strip() if context_text else 'None provided.'}\n"
+        f"{tasks_block}"
         "Generate the quiz now."
     )
     quiz_markdown = call_llm(QUIZ_GENERATION_SYSTEM_PROMPT, user_prompt, model=model)
