@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, Tuple
@@ -43,6 +44,20 @@ Memory characters injected: {MEMORY_CHAR_COUNT}
 Memory focus: <1 short sentence about what from memory influenced this plan, or "None">
 
 At the end of your response, add a short “memory snippet” describing the week’s focus and the key intentions in 2–4 bullet points.
+
+After the plan block and before the memory snippet, include a <<LEARNING_UNIT>> block with study-ready teaching content. It must be self-contained and include:
+- Decision lens (use when / don't use when)
+- Mental model
+- "How It Works (No Math)" section
+- 2–3 worked examples (problem → why naive fails → why this tool fits → system sketch)
+- Mini-project blueprint (pipeline, what to tune, debugging checklist, definition of done)
+- Optional deepening resources: max 2, free, title + platform + search phrase (no URLs)
+
+Learning unit resource rules:
+- At most 2 resources and they must be FREE.
+- Each resource must be uniquely identifiable: specific title + owner/publisher + platform + a search phrase that reliably surfaces it.
+- Avoid generic titles like "Beginner's guide to ..." or "Introduction to ..." unless paired with a unique owner/publisher and platform.
+- Format resources as: Title — Owner — Platform — search phrase: "..."
 
 Use this exact output format (do not include explanations):
 
@@ -143,6 +158,34 @@ Scope:
 - /posts/linkedin_week_X.md
 - /tasks/task_X.md
 <<END_PLAN>>
+<<LEARNING_UNIT>>
+# <Title of the learning unit>
+
+## Decision Lens (use when / don't use when)
+- Use when:
+- Don't use when:
+
+## Mental Model
+- <short mental model explanation>
+
+## How It Works (No Math)
+- <intuitive explanation>
+
+## Worked Examples
+- Example 1: <problem> → <why naive fails> → <why this tool fits> → <system sketch>
+- Example 2: <problem> → <why naive fails> → <why this tool fits> → <system sketch>
+- Example 3 (optional): <problem> → <why naive fails> → <why this tool fits> → <system sketch>
+
+## Mini-Project Blueprint
+- Pipeline:
+- What to tune:
+- Debugging checklist:
+- Definition of done (DoD):
+
+## Deepening Resources (Optional)
+- <Title> — <Owner> — <Platform> — search phrase: "<phrase>"
+- <Title> — <Owner> — <Platform> — search phrase: "<phrase>"
+<<END_LEARNING_UNIT>>
 <<MEMORY_SNIPPET>>
 - bullet 1
 - bullet 2
@@ -293,6 +336,13 @@ def extract_between(text: str, start: str, end: str) -> str:
     return text[start_idx:end_idx].strip()
 
 
+def extract_learning_unit(text: str) -> str:
+    """Extract the learning unit markdown if present, otherwise return an empty string."""
+    if "<<LEARNING_UNIT>>" not in text or "<<END_LEARNING_UNIT>>" not in text:
+        return ""
+    return extract_between(text, "<<LEARNING_UNIT>>", "<<END_LEARNING_UNIT>>")
+
+
 def format_weekly_plan(raw_text: str) -> str:
     """Clean the raw LLM response and ensure it is plain Markdown."""
     content = raw_text.strip()
@@ -387,12 +437,14 @@ def split_markdown_into_plan_and_linkedin(full_markdown: str) -> Tuple[str, str]
 
 
 def save_week_files(
-    plan_markdown: str, linkedin_markdown: str, base_dir: Path | str = "."
-) -> Tuple[Path, Path]:
-    """Persist the weekly plan and LinkedIn draft to dated markdown files."""
+    plan_markdown: str,
+    linkedin_markdown: str,
+    base_dir: Path | str = ".",
+    learning_unit_md: str | None = None,
+    learning_unit_slug_source: str | None = None,
+) -> Tuple[Path, Path, Path | None]:
+    """Persist the weekly plan, LinkedIn draft, and optional learning unit to dated markdown files."""
     root = Path(base_dir)
-    today_str = date.today().isoformat()
-
     plan_dir = root / "weekly_plans"
     posts_dir = root / "posts"
     plan_dir.mkdir(parents=True, exist_ok=True)
@@ -405,7 +457,48 @@ def save_week_files(
     plan_path.write_text(plan_markdown.strip(), encoding="utf-8")
     linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
 
-    return plan_path, linkedin_path
+    learning_unit_path = None
+    if learning_unit_md and learning_unit_md.strip():
+        learning_unit_path = save_learning_unit(
+            markdown=learning_unit_md,
+            base_dir=root,
+            timestamp=ts,
+            slug_source=learning_unit_slug_source or learning_unit_md,
+        )
+
+    return plan_path, linkedin_path, learning_unit_path
+
+
+def _extract_learning_unit_title(learning_unit_md: str) -> str | None:
+    for line in learning_unit_md.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("#").strip() or None
+    return None
+
+
+def _slugify(text: str, max_len: int = 50) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    if not slug:
+        return "learning-unit"
+    return slug[:max_len].strip("-") or "learning-unit"
+
+
+def save_learning_unit(
+    markdown: str,
+    base_dir: Path | str,
+    timestamp: str,
+    slug_source: str,
+) -> Path:
+    """Save the learning unit markdown under docs/learning_units with a timestamped filename."""
+    target_dir = Path(base_dir) / "docs" / "learning_units"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    title = _extract_learning_unit_title(markdown) or slug_source
+    slug = _slugify(title)
+    path = target_dir / f"{timestamp}_{slug}.md"
+    path.write_text(markdown.strip(), encoding="utf-8")
+    return path
 
 
 def generate_and_save_week(
@@ -461,6 +554,7 @@ def generate_and_save_week(
     raw_markdown = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
     memory_audit_block = raw_markdown.split("<<PLAN_MARKDOWN>>", 1)[0].strip()
     plan_text = extract_between(raw_markdown, "<<PLAN_MARKDOWN>>", "<<END_PLAN>>")
+    learning_unit_md = extract_learning_unit(raw_markdown)
     memory_snippet = extract_between(raw_markdown, "<<MEMORY_SNIPPET>>", "<<END_MEMORY>>")
 
     formatted_markdown = format_weekly_plan(plan_text)
@@ -475,15 +569,26 @@ def generate_and_save_week(
         default_priority=3,
     )
 
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     plan_path = save_weekly_plan(
         markdown=plan_markdown,
         output_dir=Path(base_dir) / "weekly_plans",
+        filename=f"week_plan_{ts}.md",
     )
 
     posts_dir = Path(base_dir) / "posts"
     posts_dir.mkdir(parents=True, exist_ok=True)
     linkedin_path = posts_dir / f"linkedin_week_{date.today().isoformat()}.md"
     linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
+
+    learning_unit_path = None
+    if learning_unit_md:
+        learning_unit_path = save_learning_unit(
+            markdown=learning_unit_md,
+            base_dir=Path(base_dir),
+            timestamp=ts,
+            slug_source=goal,
+        )
 
     if memory_snippet:
         memory_path = append_memory_snippet(memory_snippet, path=memory_path)
@@ -501,6 +606,7 @@ def generate_and_save_week(
         "linkedin_path": linkedin_path,
         "raw_markdown": raw_markdown,
         "memory_path": memory_path,
+        "learning_unit_path": learning_unit_path,
     }
 
 
