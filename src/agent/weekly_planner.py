@@ -59,6 +59,13 @@ Learning unit resource rules:
 - Avoid generic titles like "Beginner's guide to ..." or "Introduction to ..." unless paired with a unique owner/publisher and platform.
 - Format resources as: Title — Owner — Platform — search phrase: "..."
 
+Learning unit depth and length rules:
+- Target length: 600–1200 words total.
+- Intro/foundations exception: 400–700 words if the roadmap milestone explicitly signals intro/foundations.
+- Worked Examples must include 2–3 examples.
+- Mini-Project Blueprint must include: input format, pipeline steps, what to tune, debugging checklist, definition of done.
+- If length is short, expand Worked Examples and Mini-Project Blueprint rather than adding history.
+
 Use this exact output format (do not include explanations):
 
 <<PLAN_MARKDOWN>>
@@ -177,7 +184,8 @@ Scope:
 - Example 3 (optional): <problem> → <why naive fails> → <why this tool fits> → <system sketch>
 
 ## Mini-Project Blueprint
-- Pipeline:
+- Input format:
+- Pipeline steps:
 - What to tune:
 - Debugging checklist:
 - Definition of done (DoD):
