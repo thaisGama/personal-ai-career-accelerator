@@ -120,6 +120,7 @@ weekly_plans/        # Generated learning plans
 tasks/               # 30-minute tasks  
 posts/               # LinkedIn post drafts  
 docs/                # Memory, learning notes, summaries  
+docs/learning_units/ # Study-ready learning unit markdown  
 ```
 
 ---
@@ -155,6 +156,12 @@ Planned future features:
 # ✔ Status
 Week 1 in progress.  
 Planner Agent v0.1 under development.
+
+## 📚 Learning Units (v3)
+- New LLM markers: `<<LEARNING_UNIT>> ... <<END_LEARNING_UNIT>>` in addition to `<<PLAN_MARKDOWN>>` and `<<MEMORY_SNIPPET>>`.
+- Saved files: `docs/learning_units/{timestamp}_{slug}.md` (timestamp matches weekly plan output).
+- Streamlit: use the **Learning Library** tab to browse and render saved learning units with section expanders.
+- Resources: constrained to identifiable free sources (title + owner + platform + search phrase; no raw URLs).
 
 ---
 
