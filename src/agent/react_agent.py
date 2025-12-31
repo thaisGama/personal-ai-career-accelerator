@@ -11,7 +11,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from .memory.vector_store import LocalVectorStore
 from .tools import (
     tool_decide_next_task,
+    tool_generate_learning_roadmap,
     tool_generate_weekly_plan,
+    tool_load_learning_roadmap,
     tool_retrieve_memory,
     tool_save_outputs,
     tool_summarize_task_progress,
@@ -22,6 +24,8 @@ from .weekly_planner import DEFAULT_MODEL, call_llm
 TOOL_DISPATCH = {
     "retrieve_memory": tool_retrieve_memory,
     "summarize_task_progress": tool_summarize_task_progress,
+    "load_learning_roadmap": tool_load_learning_roadmap,
+    "generate_learning_roadmap": tool_generate_learning_roadmap,
     "generate_weekly_plan": tool_generate_weekly_plan,
     "upsert_tasks_from_plan": tool_upsert_tasks_from_plan,
     "save_outputs": tool_save_outputs,
@@ -50,6 +54,10 @@ def _summarize_output(step_name: str, output: Dict[str, Any]) -> str:
     if step_name in {"generate_plan", "generate_weekly_plan", "tool_generate_weekly_plan"}:
         plan_len = len(output.get("weekly_plan_md", ""))
         return f"generated plan chars={plan_len}"
+    if step_name in {"load_learning_roadmap", "tool_load_learning_roadmap"}:
+        return f"exists={output.get('exists')}"
+    if step_name in {"generate_learning_roadmap", "tool_generate_learning_roadmap"}:
+        return f"saved={output.get('path')}"
     if step_name in {"upsert_tasks_from_plan", "tool_upsert_tasks_from_plan"}:
         return f"created={output.get('created_count')} updated={output.get('updated_count')}"
     if step_name in {"save_outputs", "tool_save_outputs"}:
@@ -232,6 +240,8 @@ def build_react_controller_prompt(
     """Build system and user prompts for the ReAct controller."""
     tools_desc = (
         "- retrieve_memory: find relevant past memory; no file paths needed.\n"
+        "- load_learning_roadmap: load roadmap JSON from /roadmaps if present.\n"
+        "- generate_learning_roadmap: create and save a roadmap JSON + markdown.\n"
         "- summarize_task_progress: load tasks.csv summary for planner context.\n"
         "- generate_weekly_plan: generate plan content from goal and memory.\n"
         "- upsert_tasks_from_plan: parse plan markdown and update tasks.csv.\n"
@@ -246,27 +256,32 @@ def build_react_controller_prompt(
         "Allowed actions:\n"
         '{ "action": "tool", "tool_name": "...", "args": { ... } }\n'
         '{ "action": "final", "result": { ... } }\n'
-        "Tool names: retrieve_memory, summarize_task_progress, generate_weekly_plan, "
+        "Tool names: retrieve_memory, load_learning_roadmap, generate_learning_roadmap, "
+        "summarize_task_progress, generate_weekly_plan, "
         "upsert_tasks_from_plan, save_outputs, decide_next_task.\n"
         "Decide the next tool call based on the state and last observation.\n"
         "Only call tools. Do not generate the weekly plan directly.\n"
         "POLICY (must follow this priority order):\n"
         "1) If memory_attempted == True: NEVER call retrieve_memory again in this run.\n"
         "2) If memory_attempted == False AND has_memory_context == False: call retrieve_memory ONCE.\n"
-        "3) If memory_hits == 0: proceed to summarize_task_progress or generate_weekly_plan; "
+        "3) If roadmap_attempted == False: call load_learning_roadmap ONCE.\n"
+        "4) If roadmap_exists == False AND roadmap_generated == False: call generate_learning_roadmap ONCE.\n"
+        "5) If memory_hits == 0: proceed to summarize_task_progress or generate_weekly_plan; "
         "do NOT retry memory.\n"
-        "4) If has_saved_paths == true AND has_next_task == true: ALWAYS return "
+        "6) If has_saved_paths == true AND has_next_task == true: ALWAYS return "
         '{"action":"final","result":{}}.\n'
-        "5) Otherwise choose exactly ONE tool in this order:\n"
+        "7) Otherwise choose exactly ONE tool in this order:\n"
         "   a) If memory_attempted == false -> retrieve_memory\n"
-        "   b) Else if has_task_summary == false -> summarize_task_progress\n"
-        "   c) Else if has_weekly_plan_md == false -> generate_weekly_plan\n"
-        "   d) Else if has_tasks_upserted == false -> upsert_tasks_from_plan\n"
-        "   e) Else if has_saved_paths == false -> save_outputs\n"
-        "   f) Else if has_next_task == false -> decide_next_task\n"
-        "   g) Else -> final\n"
-        "6) Never repeat a tool if the state shows it already succeeded.\n"
-        "7) Output ONLY one JSON object. No prose. No markdown.\n"
+        "   b) Else if roadmap_attempted == false -> load_learning_roadmap\n"
+        "   c) Else if roadmap_exists == false AND roadmap_generated == false -> generate_learning_roadmap\n"
+        "   d) Else if has_task_summary == false -> summarize_task_progress\n"
+        "   e) Else if has_weekly_plan_md == false -> generate_weekly_plan\n"
+        "   f) Else if has_tasks_upserted == false -> upsert_tasks_from_plan\n"
+        "   g) Else if has_saved_paths == false -> save_outputs\n"
+        "   h) Else if has_next_task == false -> decide_next_task\n"
+        "   i) Else -> final\n"
+        "8) Never repeat a tool if the state shows it already succeeded.\n"
+        "9) Output ONLY one JSON object. No prose. No markdown.\n"
         "Example tool action: {\"action\":\"tool\",\"tool_name\":\"retrieve_memory\",\"args\":{\"k\":8}}\n"
         "Example final action: {\"action\":\"final\",\"result\":{\"weekly_plan_path\":\"...\"}}\n"
     )
@@ -284,6 +299,10 @@ def build_react_controller_prompt(
         f"- memory_attempted: {state.get('memory_attempted')}\n"
         f"- memory_hits: {state.get('memory_hits')}\n"
         f"- has_memory_context: {state.get('has_memory_context')}\n"
+        f"- roadmap_attempted: {state.get('roadmap_attempted')}\n"
+        f"- roadmap_exists: {state.get('roadmap_exists')}\n"
+        f"- roadmap_generated: {state.get('roadmap_generated')}\n"
+        f"- roadmap_id: {state.get('roadmap_id')}\n"
         f"- has_task_summary: {bool(state.get('task_progress_summary'))}\n"
         f"- has_weekly_plan_md: {bool(state.get('weekly_plan_md'))}\n"
         f"- has_tasks_upserted: {bool(state.get('tasks_upserted'))}\n"
@@ -383,6 +402,10 @@ def _summarize_observation(tool_name: str, output: Dict[str, Any], state: Dict[s
     if tool_name == "retrieve_memory":
         audit = output.get("audit", {})
         return f"memory_used={audit.get('memory_used')} snippets={audit.get('memory_snippets_count')}"
+    if tool_name == "load_learning_roadmap":
+        return f"roadmap_exists={output.get('exists')}"
+    if tool_name == "generate_learning_roadmap":
+        return f"roadmap_path={output.get('path')}"
     if tool_name == "summarize_task_progress":
         counts = output.get("counts_by_status", {})
         return f"open_tasks={sum(counts.values())} needs_review={counts.get('NEEDS_REVIEW', 0)}"
@@ -405,6 +428,16 @@ def _safe_final_result(state: Dict[str, Any], final_reason: str = "success") -> 
         "memory_used": state.get("memory_used", False),
         "memory_snippets_count": state.get("memory_snippets_count", 0),
         "memory_path": state.get("memory_path", ""),
+        "roadmap_path": state.get("roadmap_path", ""),
+        "roadmap_exists": state.get("roadmap_exists", False),
+        "roadmap_id": state.get("roadmap_id", ""),
+        "roadmap_total_hours": state.get("roadmap_total_hours"),
+        "roadmap_phase_count": state.get("roadmap_phase_count"),
+        "roadmap_current_phase": state.get("roadmap_current_phase"),
+        "roadmap_current_milestone": state.get("roadmap_current_milestone"),
+        "roadmap_remaining_hours": state.get("roadmap_remaining_hours"),
+        "roadmap_estimated_weeks": state.get("roadmap_estimated_weeks"),
+        "roadmap_week_number": state.get("roadmap_week_number"),
         "final_reason": final_reason,
     }
 
@@ -449,12 +482,26 @@ def run_weekly_planner_agent_react(
         "hours_per_week": hours_per_week,
         "max_session_minutes": max_session_minutes,
         "preferences": preferences,
+        "target_level": preferences.get("target_level") or "medium",
+        "background": preferences.get("background") or "",
+        "roadmap_id": preferences.get("roadmap_id") or "",
         "memory_context": "",
         "memory_used": False,
         "memory_snippets_count": 0,
         "memory_attempted": False,
         "memory_hits": 0,
         "has_memory_context": False,
+        "roadmap_attempted": False,
+        "roadmap_exists": False,
+        "roadmap_generated": False,
+        "roadmap": None,
+        "roadmap_path": "",
+        "roadmap_total_hours": None,
+        "roadmap_phase_count": None,
+        "roadmap_current_phase": None,
+        "roadmap_current_milestone": None,
+        "roadmap_remaining_hours": None,
+        "roadmap_week_number": None,
         "weekly_plan_md": "",
         "linkedin_post_md": "",
         "memory_snippet": "",
@@ -593,6 +640,22 @@ def run_weekly_planner_agent_react(
                 next_tool = "generate_weekly_plan"
             action = {"action": "tool", "tool_name": next_tool, "args": {}}
             override_reason = "memory_no_hits" if state.get("memory_hits", 0) == 0 else "memory_already_attempted"
+        if (
+            action.get("action") == "tool"
+            and action.get("tool_name") == "generate_weekly_plan"
+            and not state.get("roadmap_attempted")
+        ):
+            action = {"action": "tool", "tool_name": "load_learning_roadmap", "args": {}}
+            override_reason = "roadmap_load_before_plan"
+        if (
+            action.get("action") == "tool"
+            and action.get("tool_name") == "generate_weekly_plan"
+            and state.get("roadmap_attempted")
+            and not state.get("roadmap_exists")
+            and not state.get("roadmap_generated")
+        ):
+            action = {"action": "tool", "tool_name": "generate_learning_roadmap", "args": {}}
+            override_reason = "roadmap_generate_before_plan"
 
         record(
             step_name="controller",
@@ -639,6 +702,31 @@ def run_weekly_planner_agent_react(
             state["memory_attempted"] = True
             state["memory_hits"] = int(audit.get("memory_snippets_count", 0))
             state["has_memory_context"] = bool(state.get("memory_context"))
+        elif tool_name == "load_learning_roadmap":
+            output = tool_load_learning_roadmap(
+                goal=goal,
+                base_dir=base_path,
+                roadmap_id=state.get("roadmap_id") or None,
+            )
+            state["roadmap_attempted"] = True
+            state["roadmap_exists"] = bool(output.get("exists") and output.get("roadmap"))
+            state["roadmap"] = output.get("roadmap")
+            state["roadmap_path"] = output.get("path", "")
+        elif tool_name == "generate_learning_roadmap":
+            output = tool_generate_learning_roadmap(
+                goal=goal,
+                target_level=state.get("target_level", "medium"),
+                background=state.get("background"),
+                roadmap_id=state.get("roadmap_id") or None,
+                base_dir=base_path,
+                model=model,
+            )
+            state["roadmap_generated"] = True
+            state["roadmap"] = output.get("roadmap") if not output.get("error") else None
+            state["roadmap_exists"] = bool(state.get("roadmap"))
+            state["roadmap_path"] = output.get("path", "")
+            if output.get("roadmap_id"):
+                state["roadmap_id"] = output.get("roadmap_id")
         elif tool_name == "summarize_task_progress":
             tasks_path = Path(state.get("tasks_path"))
             output = tool_summarize_task_progress(tasks_path=tasks_path)
@@ -662,10 +750,23 @@ def run_weekly_planner_agent_react(
                 model=model,
                 base_dir=base_path,
                 task_progress=state.get("task_progress_summary"),
+                roadmap=state.get("roadmap"),
+                roadmap_path=state.get("roadmap_path"),
+                roadmap_id=state.get("roadmap_id") or None,
             )
             state["weekly_plan_md"] = output.get("weekly_plan_md", "")
             state["linkedin_post_md"] = output.get("linkedin_post_md", "")
             state["memory_snippet"] = output.get("memory_snippet", "")
+            roadmap_meta = output.get("roadmap_meta") or {}
+            if roadmap_meta:
+                state["roadmap_id"] = roadmap_meta.get("roadmap_id") or state.get("roadmap_id")
+                state["roadmap_total_hours"] = roadmap_meta.get("total_estimated_hours")
+                state["roadmap_estimated_weeks"] = roadmap_meta.get("estimated_weeks_at_hours_per_week")
+                state["roadmap_phase_count"] = roadmap_meta.get("phase_count")
+                state["roadmap_current_phase"] = roadmap_meta.get("current_phase")
+                state["roadmap_current_milestone"] = roadmap_meta.get("current_milestone")
+                state["roadmap_remaining_hours"] = roadmap_meta.get("remaining_hours")
+                state["roadmap_week_number"] = roadmap_meta.get("week_number")
             state["tasks_upserted"] = False
         elif tool_name == "upsert_tasks_from_plan":
             output = tool_upsert_tasks_from_plan(
@@ -673,6 +774,7 @@ def run_weekly_planner_agent_react(
                 tasks_path=Path(state.get("tasks_path")),
                 source_week=date.today().isoformat(),
                 default_priority=3,
+                roadmap_id=state.get("roadmap_id") or None,
             )
             state["tasks_upserted"] = True
         elif tool_name == "save_outputs":

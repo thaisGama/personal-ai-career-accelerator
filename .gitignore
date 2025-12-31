@@ -213,3 +213,4 @@ posts/
 *.csv
 data/*
 tests/fixtures/sample_quiz_results.json
+roadmaps/*

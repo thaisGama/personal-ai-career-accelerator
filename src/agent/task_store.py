@@ -26,6 +26,9 @@ TASKS_HEADER = [
     "evidence_count",
     "last_evaluated_at",
     "notes",
+    "phase_id",
+    "milestone_id",
+    "roadmap_id",
 ]
 
 OPEN_STATUSES = {"TODO", "IN_PROGRESS", "NEEDS_REVIEW"}
@@ -74,7 +77,11 @@ def load_tasks(path: Path) -> List[Dict[str, object]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         tasks: List[Dict[str, object]] = []
+        fieldnames = set(reader.fieldnames or [])
         for row in reader:
+            phase_id = row.get("phase_id", "") if "phase_id" in fieldnames else ""
+            milestone_id = row.get("milestone_id", "") if "milestone_id" in fieldnames else ""
+            roadmap_id = row.get("roadmap_id", "") if "roadmap_id" in fieldnames else ""
             tasks.append(
                 {
                     "task_id": row.get("task_id", ""),
@@ -91,6 +98,9 @@ def load_tasks(path: Path) -> List[Dict[str, object]]:
                     "evidence_count": _parse_int(row.get("evidence_count")) or 0,
                     "last_evaluated_at": row.get("last_evaluated_at", ""),
                     "notes": row.get("notes", ""),
+                    "phase_id": phase_id,
+                    "milestone_id": milestone_id,
+                    "roadmap_id": roadmap_id,
                 }
             )
         return tasks
@@ -118,6 +128,9 @@ def save_tasks(path: Path, tasks: Iterable[Dict[str, object]]) -> None:
                     "evidence_count": task.get("evidence_count", 0),
                     "last_evaluated_at": task.get("last_evaluated_at", ""),
                     "notes": task.get("notes", ""),
+                    "phase_id": task.get("phase_id", ""),
+                    "milestone_id": task.get("milestone_id", ""),
+                    "roadmap_id": task.get("roadmap_id", ""),
                 }
             )
 
@@ -190,11 +203,24 @@ def _parse_task_line(line: str, default_priority: int) -> Tuple[str, Optional[in
     return task_title, minutes, priority
 
 
+def _extract_roadmap_tags(text: str) -> Tuple[str | None, str | None]:
+    phase_match = re.search(r"\[phase:([^\]]+)\]", text, flags=re.IGNORECASE)
+    milestone_match = re.search(r"\[milestone:([^\]]+)\]", text, flags=re.IGNORECASE)
+    phase_id = phase_match.group(1).strip() if phase_match else None
+    milestone_id = milestone_match.group(1).strip() if milestone_match else None
+    return phase_id, milestone_id
+
+
+def _strip_roadmap_tags(text: str) -> str:
+    return re.sub(r"\s*\[(phase|milestone):[^\]]+\]\s*", " ", text, flags=re.IGNORECASE).strip()
+
+
 def upsert_tasks_from_plan(
     plan_md: str,
     tasks_path: Path,
     source_week: str,
     default_priority: int = 3,
+    roadmap_id: str | None = None,
 ) -> Tuple[int, int]:
     tasks = load_tasks(tasks_path)
     now_iso = _utc_now_iso()
@@ -203,7 +229,9 @@ def upsert_tasks_from_plan(
     updated = 0
 
     for line in micro_task_lines:
-        title, estimated_minutes, priority = _parse_task_line(line, default_priority)
+        phase_id, milestone_id = _extract_roadmap_tags(line)
+        cleaned_line = _strip_roadmap_tags(line)
+        title, estimated_minutes, priority = _parse_task_line(cleaned_line, default_priority)
         if not title:
             continue
         topic = _infer_topic(title)
@@ -225,6 +253,12 @@ def upsert_tasks_from_plan(
             if estimated_minutes:
                 matched["estimated_minutes"] = estimated_minutes
             matched["priority"] = priority
+            if phase_id:
+                matched["phase_id"] = phase_id
+            if milestone_id:
+                matched["milestone_id"] = milestone_id
+            if roadmap_id:
+                matched["roadmap_id"] = roadmap_id
             updated += 1
             continue
 
@@ -243,6 +277,9 @@ def upsert_tasks_from_plan(
             "evidence_count": 0,
             "last_evaluated_at": "",
             "notes": "",
+            "phase_id": phase_id or "",
+            "milestone_id": milestone_id or "",
+            "roadmap_id": roadmap_id or "",
         }
         tasks.append(task)
         created += 1

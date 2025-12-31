@@ -161,6 +161,9 @@ def run_planner(
     hours_per_week: float,
     max_session_minutes: int,
     preferences: str,
+    intensity: str,
+    background: str,
+    roadmap_id: str,
     model: str,
     use_agent: bool,
     mock_actions_path: str | None,
@@ -168,7 +171,12 @@ def run_planner(
     ensure_data_dir()
 
     if use_agent:
-        preferences_payload = {"text": preferences or ""}
+        preferences_payload = {
+            "text": preferences or "",
+            "target_level": intensity,
+            "background": background or "",
+            "roadmap_id": roadmap_id or "",
+        }
         mock_path = Path(mock_actions_path) if mock_actions_path else None
         result = react_agent.run_weekly_planner_agent_react(
             goal=goal,
@@ -191,11 +199,17 @@ def run_planner(
             result["plan_path"] = plan_path.as_posix()
         return result, plan_md, linkedin_md
 
+    enriched_preferences = preferences or ""
+    if intensity or background:
+        enriched_preferences = (
+            f"{enriched_preferences}\n\nLearning intensity: {intensity}\nBackground: {background or 'none'}"
+        ).strip()
+
     result = weekly_planner.generate_and_save_week(
         goal=goal,
         time_per_week_hours=hours_per_week,
         max_session_minutes=max_session_minutes,
-        preferences=preferences,
+        preferences=enriched_preferences,
         model=model,
         base_dir=BASE_DIR,
     )
@@ -265,6 +279,23 @@ with st.sidebar:
         height=120,
         key="planner_preferences",
     )
+    roadmap_id = st.text_input(
+        "Roadmap ID (optional)",
+        value=st.session_state.get("planner_roadmap_id", ""),
+        key="planner_roadmap_id",
+    )
+    learning_intensity = st.selectbox(
+        "Learning intensity",
+        ["light", "medium", "hardcore"],
+        index=["light", "medium", "hardcore"].index(st.session_state.get("planner_intensity", "medium")),
+        key="planner_intensity",
+    )
+    background = st.text_area(
+        "Background / constraints (optional)",
+        value=st.session_state.get("planner_background", ""),
+        height=80,
+        key="planner_background",
+    )
     planner_model = st.text_input(
         "Model", value=getattr(weekly_planner, "DEFAULT_MODEL", "gpt-4.1-mini"), key="planner_model"
     )
@@ -309,6 +340,9 @@ if generate:
             hours_per_week=hours_per_week,
             max_session_minutes=max_session_minutes,
             preferences=preferences,
+            intensity=learning_intensity,
+            background=background,
+            roadmap_id=roadmap_id,
             model=planner_model,
             use_agent=use_agent_loop,
             mock_actions_path=effective_mock_path,
@@ -378,6 +412,32 @@ with planner_tab:
                             st.caption("Could not read trace details.")
 
             st.divider()
+            if result.get("roadmap_path") or result.get("roadmap_total_hours"):
+                st.subheader("Roadmap summary")
+                if result.get("roadmap_path"):
+                    st.write(f"**Roadmap:** `{result.get('roadmap_path')}`")
+                if result.get("roadmap_total_hours") is not None:
+                    st.write(f"**Total hours:** {result.get('roadmap_total_hours')}")
+                estimated_weeks = result.get("roadmap_estimated_weeks") or {}
+                if estimated_weeks:
+                    st.write(
+                        "**Estimated weeks (2/5/7 h/wk):** "
+                        f"{estimated_weeks.get('2', '?')} / {estimated_weeks.get('5', '?')} / "
+                        f"{estimated_weeks.get('7', '?')}"
+                    )
+                if result.get("roadmap_total_hours") and hours_per_week:
+                    weeks_for_slider = float(result.get("roadmap_total_hours")) / float(hours_per_week)
+                    st.write(f"**Estimated weeks at {hours_per_week}h/week:** {weeks_for_slider:.1f}")
+                if result.get("roadmap_phase_count") is not None:
+                    st.write(f"**Phases:** {result.get('roadmap_phase_count')}")
+                if result.get("roadmap_current_phase") or result.get("roadmap_current_milestone"):
+                    st.write(
+                        f"**Current focus:** Phase {result.get('roadmap_current_phase')} | "
+                        f"Milestone {result.get('roadmap_current_milestone')}"
+                    )
+                if result.get("roadmap_remaining_hours") is not None:
+                    st.write(f"**Remaining hours:** {result.get('roadmap_remaining_hours')}")
+
             st.subheader("Memory quick view")
             raw_memory_path = result.get("memory_path")
             memory_path = Path(raw_memory_path) if raw_memory_path else (BASE_DIR / "docs" / "memory.md")
