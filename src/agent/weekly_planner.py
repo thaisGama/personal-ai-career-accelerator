@@ -33,6 +33,7 @@ def build_weekly_planner_prompt(
     background: str | None = None,
 ) -> Tuple[str, str]:
     """Construct system and user prompts for the weekly planner agent."""
+    # Learning unit quality constraints: job-ready, operational, and depth-first rather than generic.
     system_prompt = """You are an AI Weekly Learning Planner. Generate a clean, motivating weekly plan that fits into 10–30 minute sessions. Return only raw Markdown (no code fences).
 
 You must BEGIN your output with EXACTLY the following MEMORY_AUDIT block (no text before it). Do not change the provided values. For the Memory focus line, write one short sentence about what from memory influenced this plan, or "None" if nothing applied:
@@ -49,8 +50,9 @@ After the plan block and before the memory snippet, include a <<LEARNING_UNIT>> 
 - Decision lens (use when / don't use when)
 - Mental model
 - "How It Works (No Math)" section
-- 2–3 worked examples (problem → why naive fails → why this tool fits → system sketch)
-- Mini-project blueprint (pipeline, what to tune, debugging checklist, definition of done)
+- Operational Playbook (How You Use This at Work)
+- 3 worked examples (strict template below)
+- Mini-project blueprint (expanded format below)
 - Optional deepening resources: max 2, free, title + platform + search phrase (no URLs)
 
 Learning unit resource rules:
@@ -60,11 +62,18 @@ Learning unit resource rules:
 - Format resources as: Title — Owner — Platform — search phrase: "..."
 
 Learning unit depth and length rules:
-- Target length: 600–1200 words total.
-- Intro/foundations exception: 400–700 words if the roadmap milestone explicitly signals intro/foundations.
-- Worked Examples must include 2–3 examples.
-- Mini-Project Blueprint must include: input format, pipeline steps, what to tune, debugging checklist, definition of done.
-- If length is short, expand Worked Examples and Mini-Project Blueprint rather than adding history.
+- Target length: 800–1400 words total.
+- Intro/foundations exception: 500–900 words if the roadmap milestone explicitly signals intro/foundations.
+- Must include Operational Playbook, 3 worked examples in the strict template, and the expanded Mini-Project Blueprint (with MVP + stretch).
+- If length is short, expand Worked Examples and the Operational Playbook rather than adding history.
+
+Learning unit relevance rules:
+- Teach what is relevant to day-to-day work for the target role (default: AI Engineer / AI Generalist).
+- Do NOT go deep into research/training internals unless explicitly requested or required for the practical task.
+
+Learning unit example realism rules:
+- Prefer workplace-realistic examples (tickets, docs, tasks, logs, product requirements).
+- Use toy examples only if they directly support a practical decision.
 
 Use this exact output format (do not include explanations):
 
@@ -178,17 +187,47 @@ Scope:
 ## How It Works (No Math)
 - <intuitive explanation>
 
+## Operational Playbook (How You Use This at Work)
+- Decisions you make in practice (3–7 bullets)
+- What to tune (2–5 bullets)
+- How to evaluate quality quickly (simple test set + manual review loop)
+- Common failure modes + fixes (at least 5)
+
 ## Worked Examples
-- Example 1: <problem> → <why naive fails> → <why this tool fits> → <system sketch>
-- Example 2: <problem> → <why naive fails> → <why this tool fits> → <system sketch>
-- Example 3 (optional): <problem> → <why naive fails> → <why this tool fits> → <system sketch>
+- Example 1:
+  - Problem (2–3 lines)
+  - Naive approach + why it fails (bullets)
+  - Practical approach (pipeline bullets)
+  - Two tuning levers (bullets)
+  - Debug checklist (2–3 bullets)
+  - System sketch (ASCII pipeline, no code)
+- Example 2:
+  - Problem (2–3 lines)
+  - Naive approach + why it fails (bullets)
+  - Practical approach (pipeline bullets)
+  - Two tuning levers (bullets)
+  - Debug checklist (2–3 bullets)
+  - System sketch (ASCII pipeline, no code)
+- Example 3:
+  - Problem (2–3 lines)
+  - Naive approach + why it fails (bullets)
+  - Practical approach (pipeline bullets)
+  - Two tuning levers (bullets)
+  - Debug checklist (2–3 bullets)
+  - System sketch (ASCII pipeline, no code)
+
+At least 1 worked example must be anchored to the user's stated goal or current roadmap milestone.
 
 ## Mini-Project Blueprint
 - Input format:
+- Data structures (example fields/tables):
 - Pipeline steps:
 - What to tune:
-- Debugging checklist:
+- Debugging checklist (>=6 items):
 - Definition of done (DoD):
+- Timeboxing:
+  - MVP in 60–120 min:
+  - Stretch:
 
 ## Deepening Resources (Optional)
 - <Title> — <Owner> — <Platform> — search phrase: "<phrase>"
