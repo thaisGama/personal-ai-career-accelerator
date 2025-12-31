@@ -214,14 +214,16 @@ def run_planner(
         base_dir=BASE_DIR,
     )
 
-    # Your function returns raw_markdown that includes both plan + linkedin blocks
     raw_md = result.get("raw_markdown", "")
 
-    # Use your helper to split (if it exists and matches your markers)
     try:
-        plan_md, linkedin_md = weekly_planner.split_markdown_into_plan_and_linkedin(raw_md)
+        memory_audit_block = raw_md.split("<<PLAN_MARKDOWN>>", 1)[0].strip()
+        plan_text = weekly_planner.extract_between(raw_md, "<<PLAN_MARKDOWN>>", "<<END_PLAN>>")
+        formatted = weekly_planner.format_weekly_plan(plan_text)
+        if memory_audit_block:
+            formatted = f"{memory_audit_block}\n\n{formatted}"
+        plan_md, linkedin_md = weekly_planner.split_markdown_into_plan_and_linkedin(formatted)
     except Exception:
-        # Fallback: just show raw markdown if split fails
         plan_md, linkedin_md = raw_md, ""
 
     return result, plan_md, linkedin_md
@@ -321,7 +323,7 @@ with st.sidebar:
     generate = col1.button("Generate plan", type="primary", use_container_width=True)
     clear = col2.button("Clear planner", use_container_width=True)
 
-planner_tab, quiz_tab = st.tabs(["Weekly Planner", "Learning Check (Quiz)"])
+planner_tab, quiz_tab, library_tab = st.tabs(["Weekly Planner", "Learning Check (Quiz)", "Learning Library"])
 
 if clear:
     for key in [
@@ -384,6 +386,8 @@ with planner_tab:
             st.success("Saved")
             st.write(f"**Plan:** `{result.get('plan_path')}`")
             st.write(f"**LinkedIn:** `{result.get('linkedin_path')}`")
+            if result.get("learning_unit_path"):
+                st.write(f"**Learning Unit:** `{result.get('learning_unit_path')}`")
             st.write(f"**Memory:** `{result.get('memory_path')}`")
             if result.get("next_task"):
                 st.write(f"**Next task:** {result.get('next_task')}")
@@ -498,6 +502,55 @@ with quiz_tab:
             if k.startswith("quiz_answer_"):
                 st.session_state.pop(k)
         st.rerun()
+
+with library_tab:
+    st.markdown("## Learning Library")
+
+    library_dir = BASE_DIR / "docs" / "learning_units"
+    if not library_dir.exists():
+        st.info("No learning units saved yet. Generate a weekly plan to create one.")
+    else:
+        files = sorted(
+            [path for path in library_dir.glob("*.md") if path.is_file()],
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if not files:
+            st.info("No learning units found in docs/learning_units.")
+        else:
+            options = {path.name: path for path in files}
+            selected_name = st.selectbox("Choose a learning unit", list(options.keys()))
+            selected_path = options.get(selected_name)
+            if selected_path:
+                content = selected_path.read_text(encoding="utf-8")
+                title = None
+                for line in content.splitlines():
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+                if title:
+                    st.markdown(f"### {title}")
+
+                sections = []
+                current_title = None
+                current_lines = []
+                for line in content.splitlines():
+                    if line.startswith("## "):
+                        if current_title:
+                            sections.append((current_title, "\n".join(current_lines).strip()))
+                        current_title = line[3:].strip()
+                        current_lines = []
+                    else:
+                        current_lines.append(line)
+                if current_title:
+                    sections.append((current_title, "\n".join(current_lines).strip()))
+
+                if sections:
+                    for section_title, body in sections:
+                        with st.expander(section_title, expanded=False):
+                            st.markdown(body or "_No content_")
+                else:
+                    st.markdown(content)
 
     selected_tasks = []
     tasks_context = ""
