@@ -503,55 +503,6 @@ with quiz_tab:
                 st.session_state.pop(k)
         st.rerun()
 
-with library_tab:
-    st.markdown("## Learning Library")
-
-    library_dir = BASE_DIR / "docs" / "learning_units"
-    if not library_dir.exists():
-        st.info("No learning units saved yet. Generate a weekly plan to create one.")
-    else:
-        files = sorted(
-            [path for path in library_dir.glob("*.md") if path.is_file()],
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        if not files:
-            st.info("No learning units found in docs/learning_units.")
-        else:
-            options = {path.name: path for path in files}
-            selected_name = st.selectbox("Choose a learning unit", list(options.keys()))
-            selected_path = options.get(selected_name)
-            if selected_path:
-                content = selected_path.read_text(encoding="utf-8")
-                title = None
-                for line in content.splitlines():
-                    if line.startswith("# "):
-                        title = line[2:].strip()
-                        break
-                if title:
-                    st.markdown(f"### {title}")
-
-                sections = []
-                current_title = None
-                current_lines = []
-                for line in content.splitlines():
-                    if line.startswith("## "):
-                        if current_title:
-                            sections.append((current_title, "\n".join(current_lines).strip()))
-                        current_title = line[3:].strip()
-                        current_lines = []
-                    else:
-                        current_lines.append(line)
-                if current_title:
-                    sections.append((current_title, "\n".join(current_lines).strip()))
-
-                if sections:
-                    for section_title, body in sections:
-                        with st.expander(section_title, expanded=False):
-                            st.markdown(body or "_No content_")
-                else:
-                    st.markdown(content)
-
     selected_tasks = []
     tasks_context = ""
     task_ids = []
@@ -800,3 +751,52 @@ with library_tab:
     else:
         if st.button("Unlock answers (manual)"):
             st.session_state["quiz_unlocked"] = True
+
+with library_tab:
+    st.markdown("## Learning Library")
+
+    library_dir = BASE_DIR / "docs" / "learning_units"
+    if not library_dir.exists():
+        st.info("No learning units saved yet. Generate a weekly plan to create one.")
+    else:
+        files = sorted(
+            [path for path in library_dir.glob("*.md") if path.is_file()],
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if not files:
+            st.info("No learning units found in docs/learning_units.")
+        else:
+            options = {path.name: path for path in files}
+            selected_name = st.selectbox("Choose a learning unit", list(options.keys()))
+            selected_path = options.get(selected_name)
+            if selected_path:
+                content = selected_path.read_text(encoding="utf-8")
+                title = None
+                for line in content.splitlines():
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+                if title:
+                    st.markdown(f"### {title}")
+
+                sections = []
+                current_title = None
+                current_lines = []
+                for line in content.splitlines():
+                    if line.startswith("## "):
+                        if current_title:
+                            sections.append((current_title, "\n".join(current_lines).strip()))
+                        current_title = line[3:].strip()
+                        current_lines = []
+                    else:
+                        current_lines.append(line)
+                if current_title:
+                    sections.append((current_title, "\n".join(current_lines).strip()))
+
+                if sections:
+                    for section_title, body in sections:
+                        with st.expander(section_title, expanded=False):
+                            st.markdown(body or "_No content_")
+                else:
+                    st.markdown(content)
