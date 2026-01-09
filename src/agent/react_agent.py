@@ -8,6 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .critic import run_plan_critic
 from .memory.vector_store import LocalVectorStore
 from .tools import (
     tool_decide_next_task,
@@ -67,6 +68,10 @@ def _summarize_output(step_name: str, output: Dict[str, Any]) -> str:
         return f"saved plan={output.get('weekly_plan_path')} linkedin={output.get('linkedin_path')}"
     if step_name in {"decide_next_task", "tool_decide_next_task"}:
         return f"next_task={output.get('next_task')}"
+    if step_name in {"critic_plan_review", "tool_critic_plan_review"}:
+        violations = output.get("violations", [])
+        patches = output.get("patch_list", [])
+        return f"status={output.get('status')} violations={len(violations)} patches={len(patches)}"
     if step_name == "controller":
         return f"action={output.get('action')}"
     return "ok"
@@ -84,6 +89,7 @@ def run_weekly_planner_agent_fixed(
     preferences: str | None = None,
     model: str = DEFAULT_MODEL,
     base_dir: Path | str = ".",
+    enable_critic: bool = False,
 ) -> Dict[str, Any]:
     """Run the multi-step weekly planner agent and persist a trace JSON file."""
     base_path = Path(base_dir)
@@ -152,6 +158,27 @@ def run_weekly_planner_agent_fixed(
         tool_output=plan_output,
     )
 
+    critic_report = None
+    if enable_critic:
+        misbehaviors_path = base_path / "docs" / "misbehaviors.md"
+        misbehaviors_chars = (
+            len(misbehaviors_path.read_text(encoding="utf-8")) if misbehaviors_path.exists() else 0
+        )
+        critic_report = run_plan_critic(
+            weekly_plan_md=plan_output.get("weekly_plan_md", ""),
+            base_dir=base_path,
+            model=model,
+        )
+        record(
+            step_name="critic_plan_review",
+            tool_name="tool_critic_plan_review",
+            tool_input={
+                "plan_chars": len(plan_output.get("weekly_plan_md", "")),
+                "misbehaviors_chars": misbehaviors_chars,
+            },
+            tool_output=critic_report,
+        )
+
     upsert_output = tool_upsert_tasks_from_plan(
         plan_md=plan_output.get("weekly_plan_md", ""),
         tasks_path=tasks_path,
@@ -208,6 +235,8 @@ def run_weekly_planner_agent_fixed(
         "weekly_plan_path": save_output.get("weekly_plan_path"),
         "linkedin_path": save_output.get("linkedin_path"),
         "learning_unit_path": save_output.get("learning_unit_path", ""),
+        "critic_report": critic_report,
+        "critic_status": critic_report.get("status") if critic_report else None,
         "trace_path": trace_path.as_posix(),
         "next_task": next_task_output.get("next_task"),
         "memory_used": audit.get("memory_used", False),
@@ -223,6 +252,7 @@ def run_weekly_planner_agent(
     preferences: str | None = None,
     model: str = DEFAULT_MODEL,
     base_dir: Path | str = ".",
+    enable_critic: bool = False,
 ) -> Dict[str, Any]:
     """Backward-compatible fixed-sequence runner."""
     return run_weekly_planner_agent_fixed(
@@ -232,6 +262,7 @@ def run_weekly_planner_agent(
         preferences=preferences,
         model=model,
         base_dir=base_dir,
+        enable_critic=enable_critic,
     )
 
 
@@ -456,6 +487,8 @@ def _safe_final_result(state: Dict[str, Any], final_reason: str = "success") -> 
         "roadmap_completion_mode": state.get("roadmap_completion_mode"),
         "roadmap_used_hours_per_week": state.get("roadmap_used_hours_per_week"),
         "roadmap_debug_notes": state.get("roadmap_debug_notes"),
+        "critic_report": state.get("critic_report"),
+        "critic_status": state.get("critic_status"),
         "final_reason": final_reason,
     }
 
@@ -469,6 +502,7 @@ def run_weekly_planner_agent_react(
     base_dir: Path,
     max_steps: int = 10,
     mock_actions_path: Optional[Path] = None,
+    enable_critic: bool = False,
 ) -> Dict[str, Any]:
     """Run a ReAct-style tool-calling loop and persist a trace JSON file."""
     base_path = Path(base_dir)
@@ -545,6 +579,10 @@ def run_weekly_planner_agent_react(
         "open_tasks_count": 0,
         "needs_review_count": 0,
         "weak_topics": [],
+        "enable_critic": enable_critic,
+        "critic_attempted": False,
+        "critic_report": None,
+        "critic_status": None,
     }
 
     def _next_required_tool(run_state: Dict[str, Any]) -> Optional[str]:
@@ -878,6 +916,30 @@ def run_weekly_planner_agent_react(
                 state["roadmap_used_hours_per_week"] = roadmap_meta.get("used_hours_per_week")
                 state["roadmap_debug_notes"] = roadmap_meta.get("debug_notes")
             state["tasks_upserted"] = False
+            if state.get("enable_critic") and not state.get("critic_attempted"):
+                misbehaviors_path = base_path / "docs" / "misbehaviors.md"
+                misbehaviors_chars = (
+                    len(misbehaviors_path.read_text(encoding="utf-8"))
+                    if misbehaviors_path.exists()
+                    else 0
+                )
+                critic_report = run_plan_critic(
+                    weekly_plan_md=state.get("weekly_plan_md", ""),
+                    base_dir=base_path,
+                    model=model,
+                )
+                state["critic_attempted"] = True
+                state["critic_report"] = critic_report
+                state["critic_status"] = critic_report.get("status")
+                record(
+                    step_name="critic_plan_review",
+                    tool_name="tool_critic_plan_review",
+                    tool_input={
+                        "plan_chars": len(state.get("weekly_plan_md", "")),
+                        "misbehaviors_chars": misbehaviors_chars,
+                    },
+                    tool_output=critic_report,
+                )
         elif tool_name == "upsert_tasks_from_plan":
             output = tool_upsert_tasks_from_plan(
                 plan_md=state.get("weekly_plan_md", ""),

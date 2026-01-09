@@ -213,6 +213,7 @@ def run_planner(
     model: str,
     use_agent: bool,
     mock_actions_path: str | None,
+    enable_critic: bool,
 ):
     ensure_data_dir()
 
@@ -233,6 +234,7 @@ def run_planner(
             model=model,
             base_dir=BASE_DIR,
             mock_actions_path=mock_path,
+            enable_critic=enable_critic,
         )
         plan_path_str = result.get("weekly_plan_path") or result.get("plan_path", "")
         linkedin_path_str = result.get("linkedin_path", "")
@@ -369,6 +371,11 @@ with st.sidebar:
         value=st.session_state.get("planner_use_agent", False),
         key="planner_use_agent",
     )
+    enable_critic = st.checkbox(
+        "Enable critic review",
+        value=st.session_state.get("planner_enable_critic", False),
+        key="planner_enable_critic",
+    )
     use_mock_actions = st.checkbox(
         "Mock agent (use fixtures)",
         value=st.session_state.get("planner_use_mock", False),
@@ -477,6 +484,7 @@ if generate:
             model=planner_model,
             use_agent=use_agent_loop,
             mock_actions_path=effective_mock_path,
+            enable_critic=enable_critic,
         )
 
     st.session_state["planner_result"] = result
@@ -547,6 +555,23 @@ with planner_tab:
                                 )
                         except Exception:
                             st.caption("Could not read trace details.")
+
+            critic_report = result.get("critic_report")
+            if result.get("critic_status") or critic_report:
+                status = result.get("critic_status") or "UNKNOWN"
+                st.write(f"**Critic:** {status}")
+                if status == "FAIL" and critic_report:
+                    with st.expander("Critic violations and patch list"):
+                        violations = critic_report.get("violations", [])
+                        patch_list = critic_report.get("patch_list", [])
+                        if violations:
+                            st.markdown("**Violations**")
+                            for item in violations:
+                                st.write(f"- [{item.get('id')}] {item.get('message')}")
+                        if patch_list:
+                            st.markdown("**Patch list**")
+                            for item in patch_list:
+                                st.write(f"- {item}")
 
             st.divider()
             if result.get("roadmap_path") or result.get("roadmap_total_hours"):
