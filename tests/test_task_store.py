@@ -86,3 +86,22 @@ def test_select_quiz_tasks_prioritizes_needs_review(tmp_path: Path):
 
     assert ids[0] == "task-a"
     assert ids[1] == "task-b"
+
+
+def test_load_tasks_migrates_learning_validated_column(tmp_path: Path):
+    tasks_path = tmp_path / "tasks.csv"
+    tasks_path.write_text(
+        "\n".join(
+            [
+                "task_id,created_at,updated_at,status,source_week,title,topic,estimated_minutes,priority,prerequisites,evidence_score,evidence_count,last_evaluated_at,notes",
+                "task-a,2025-01-01T00:00:00+00:00,2025-01-02T00:00:00+00:00,DONE,2025-01-02,Review embeddings,embeddings,15,3,,0.9,1,,",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    tasks = load_tasks(tasks_path)
+
+    header = tasks_path.read_text(encoding="utf-8").splitlines()[0]
+    assert "learning_validated" in header
+    assert tasks[0].get("learning_validated") is False

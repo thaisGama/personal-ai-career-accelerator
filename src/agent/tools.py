@@ -12,12 +12,10 @@ from uuid import uuid4
 from .memory.vector_store import LocalVectorStore
 from .weekly_planner import (
     append_memory_snippet,
-    build_weekly_planner_prompt,
     call_llm,
     extract_between,
-    format_weekly_plan,
+    generate_weekly_plan_and_learning_unit,
     save_week_files,
-    split_markdown_into_plan_and_linkedin,
 )
 from .task_store import (
     TaskProgressSummary,
@@ -110,6 +108,7 @@ def tool_generate_weekly_plan(
     roadmap_context = None
     roadmap_progress = None
     roadmap_meta: Dict[str, Any] | None = None
+    week_number = None
     if roadmap:
         effective_roadmap_id = _infer_roadmap_id(goal, roadmap_id, roadmap_path)
         tasks_path = Path(base_dir) / "data" / "tasks.csv"
@@ -117,6 +116,9 @@ def tool_generate_weekly_plan(
         progress = _compute_roadmap_progress(roadmap, tasks, hours_per_week, effective_roadmap_id)
         roadmap_context = _format_roadmap_context(roadmap, progress)
         roadmap_progress = _format_roadmap_progress(roadmap, progress)
+        week_number = progress.get("week_number")
+        milestone_task_counts = progress.get("milestone_task_counts", {})
+        sorted_milestones = dict(sorted(milestone_task_counts.items(), key=lambda item: item[0])[:10])
         roadmap_meta = {
             "roadmap_path": roadmap_path or "",
             "roadmap_id": effective_roadmap_id,
@@ -129,9 +131,16 @@ def tool_generate_weekly_plan(
             "current_milestone": progress.get("current_milestone_id"),
             "remaining_hours": progress.get("remaining_hours"),
             "week_number": progress.get("week_number"),
+            "completed_hours": progress.get("completed_hours"),
+            "completed_milestones": progress.get("completed_milestones"),
+            "computed_week_number": progress.get("computed_week_number"),
+            "milestone_task_counts": sorted_milestones,
+            "milestone_completion_mode": progress.get("milestone_completion_mode"),
+            "used_hours_per_week": progress.get("used_hours_per_week"),
+            "debug_notes": progress.get("debug_notes"),
         }
 
-    system_prompt, user_prompt = build_weekly_planner_prompt(
+    generation = generate_weekly_plan_and_learning_unit(
         goal=goal,
         time_per_week_hours=hours_per_week,
         max_session_minutes=max_session_minutes,
@@ -143,26 +152,19 @@ def tool_generate_weekly_plan(
         task_progress=task_progress,
         roadmap_context=roadmap_context,
         roadmap_progress=roadmap_progress,
+        week_number=week_number,
         target_level=target_level,
         background=background,
+        model=model,
     )
 
-    raw_markdown = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
-    memory_audit_block = raw_markdown.split("<<PLAN_MARKDOWN>>", 1)[0].strip()
-    plan_text = extract_between(raw_markdown, "<<PLAN_MARKDOWN>>", "<<END_PLAN>>")
-    memory_snippet = extract_between(raw_markdown, "<<MEMORY_SNIPPET>>", "<<END_MEMORY>>")
-
-    formatted_markdown = format_weekly_plan(plan_text)
-    if memory_audit_block:
-        formatted_markdown = f"{memory_audit_block}\n\n{formatted_markdown}"
-
-    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
-
     return {
-        "weekly_plan_md": plan_markdown,
-        "linkedin_post_md": linkedin_markdown,
-        "memory_snippet": memory_snippet or "",
-        "raw_llm_output": raw_markdown,
+        "weekly_plan_md": generation.get("plan_markdown", ""),
+        "linkedin_post_md": generation.get("linkedin_markdown", ""),
+        "learning_unit_md": generation.get("learning_unit_md", ""),
+        "memory_snippet": generation.get("memory_snippet", "") or "",
+        "raw_llm_output": generation.get("raw_plan_output", ""),
+        "raw_learning_unit_output": generation.get("raw_learning_unit_output", ""),
         "roadmap_meta": roadmap_meta or {},
     }
 
@@ -172,12 +174,16 @@ def tool_save_outputs(
     weekly_plan_md: str,
     linkedin_post_md: str,
     memory_snippet: str,
+    learning_unit_md: str = "",
+    learning_unit_slug_source: str | None = None,
 ) -> Dict[str, Any]:
     """Save generated artifacts and update memory when available."""
-    plan_path, linkedin_path = save_week_files(
+    plan_path, linkedin_path, learning_unit_path = save_week_files(
         plan_markdown=weekly_plan_md,
         linkedin_markdown=linkedin_post_md,
         base_dir=base_dir,
+        learning_unit_md=learning_unit_md,
+        learning_unit_slug_source=learning_unit_slug_source,
     )
 
     memory_updated = False
@@ -197,6 +203,7 @@ def tool_save_outputs(
     return {
         "weekly_plan_path": plan_path.as_posix(),
         "linkedin_path": linkedin_path.as_posix(),
+        "learning_unit_path": learning_unit_path.as_posix() if learning_unit_path else "",
         "memory_updated": memory_updated,
         "memory_path": memory_path,
     }
@@ -318,9 +325,28 @@ def _validate_roadmap_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str]]:
                     _expect(isinstance(milestone.get("definition_of_done"), list), "definition_of_done must be a list.")
                     _expect(isinstance(milestone.get("deliverables"), list), "deliverables must be a list.")
                     _expect(
+                        milestone.get("depth") in {"intro", "operational"},
+                        "milestone depth must be intro|operational.",
+                    )
+                    _expect(
                         isinstance(milestone.get("suggested_practice"), list),
                         "suggested_practice must be a list.",
                     )
+                    resources = milestone.get("resources", [])
+                    _expect(isinstance(resources, list), "resources must be a list.")
+                    if isinstance(resources, list):
+                        _expect(len(resources) <= 2, "resources must have at most 2 items.")
+                        for resource in resources:
+                            _expect(isinstance(resource, dict), "resource must be an object.")
+                            if not isinstance(resource, dict):
+                                continue
+                            _expect(isinstance(resource.get("title"), str), "resource title must be a string.")
+                            _expect(isinstance(resource.get("owner"), str), "resource owner must be a string.")
+                            _expect(isinstance(resource.get("platform"), str), "resource platform must be a string.")
+                            _expect(
+                                isinstance(resource.get("search_phrase"), str),
+                                "resource search_phrase must be a string.",
+                            )
 
     return len(errors) == 0, errors
 
@@ -354,6 +380,8 @@ def _render_roadmap_markdown(roadmap: Dict[str, Any]) -> str:
         for milestone in phase.get("milestones", []):
             lines.append(f"  - {milestone.get('milestone_id')}: {milestone.get('title')}")
             lines.append(f"    - Estimated hours: {milestone.get('estimated_hours')}")
+            if milestone.get("depth"):
+                lines.append(f"    - Depth: {milestone.get('depth')}")
             dod = milestone.get("definition_of_done") or []
             if dod:
                 lines.append("    - Definition of done:")
@@ -366,6 +394,15 @@ def _render_roadmap_markdown(roadmap: Dict[str, Any]) -> str:
             if practice:
                 lines.append("    - Suggested practice:")
                 lines.extend([f"      - {item}" for item in practice])
+            resources = milestone.get("resources") or []
+            if resources:
+                lines.append("    - Resources:")
+                for resource in resources[:2]:
+                    title = resource.get("title")
+                    owner = resource.get("owner")
+                    platform = resource.get("platform")
+                    search_phrase = resource.get("search_phrase")
+                    lines.append(f"      - {title} - {owner} - {platform} - search: \"{search_phrase}\"")
         lines.append("")
     completion = roadmap.get("completion_criteria") or []
     if completion:
@@ -424,11 +461,32 @@ def _compute_roadmap_progress(
             continue
         milestone_tasks.setdefault(milestone_id, []).append(task)
 
+    milestone_task_counts: Dict[str, Dict[str, int]] = {}
+    for milestone_id, task_list in milestone_tasks.items():
+        total = len(task_list)
+        done = sum(1 for task in task_list if task.get("status") == "DONE")
+        validated = sum(1 for task in task_list if bool(task.get("learning_validated")))
+        done_and_validated = sum(
+            1
+            for task in task_list
+            if task.get("status") == "DONE" and bool(task.get("learning_validated"))
+        )
+        milestone_task_counts[milestone_id] = {
+            "total": total,
+            "done": done,
+            "validated": validated,
+            "done_and_validated": done_and_validated,
+        }
+
     completed_milestones: List[str] = []
     for milestone_id, task_list in milestone_tasks.items():
         if not task_list:
             continue
-        if all(task.get("status") == "DONE" for task in task_list):
+        if all(
+            task.get("status") == "DONE" and bool(task.get("learning_validated"))
+            for task in task_list
+        ):
+            # Require quiz validation to advance milestone progress.
             completed_milestones.append(milestone_id)
 
     completed_hours = sum(milestone_hours.get(mid, 0.0) for mid in completed_milestones)
@@ -456,6 +514,11 @@ def _compute_roadmap_progress(
         "current_phase_id": current_phase_id,
         "current_milestone_id": current_milestone_id,
         "week_number": week_number,
+        "milestone_task_counts": milestone_task_counts,
+        "milestone_completion_mode": "DONE+validated gate",
+        "used_hours_per_week": hours_per_week,
+        "computed_week_number": week_number,
+        "debug_notes": "week_number = int(completed_hours/hours_per_week)+1",
     }
 
 
@@ -481,6 +544,8 @@ def _format_roadmap_context(roadmap: Dict[str, Any], progress: Dict[str, Any]) -
         f"- Current milestone: {current_milestone_id} {milestone_detail.get('title') if milestone_detail else ''}".strip(),
     ]
     if milestone_detail:
+        if milestone_detail.get("depth"):
+            lines.append(f"- Milestone depth: {milestone_detail.get('depth')}")
         if milestone_detail.get("definition_of_done"):
             dod = ", ".join(milestone_detail.get("definition_of_done")[:4])
             lines.append(f"- Milestone definition of done: {dod}")
@@ -547,6 +612,7 @@ def _seed_roadmap_tasks(roadmap: Dict[str, Any], base_dir: Path, roadmap_id: str
                     "evidence_score": 0.0,
                     "evidence_count": 0,
                     "last_evaluated_at": "",
+                    "learning_validated": False,
                     "notes": "",
                     "phase_id": phase_id,
                     "milestone_id": milestone_id,
@@ -559,12 +625,19 @@ def _seed_roadmap_tasks(roadmap: Dict[str, Any], base_dir: Path, roadmap_id: str
     return created
 
 
-def tool_load_learning_roadmap(goal: str, base_dir: Path, roadmap_id: str | None = None) -> Dict[str, Any]:
+def tool_load_learning_roadmap(
+    goal: str,
+    base_dir: Path,
+    roadmap_id: str | None = None,
+    force_regenerate: bool = False,
+) -> Dict[str, Any]:
     """Load a saved roadmap JSON if present."""
     json_path, legacy_json_path, _ = _roadmap_paths(goal, base_dir, roadmap_id)
     target_path = json_path if json_path.exists() else legacy_json_path
     if not target_path.exists():
         return {"exists": False}
+    if force_regenerate:
+        return {"exists": False, "path": target_path.as_posix(), "force_regenerate": True}
     try:
         roadmap = json.loads(target_path.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -584,11 +657,21 @@ def tool_generate_learning_roadmap(
     if target_level not in {"light", "medium", "hardcore"}:
         target_level = "medium"
     system_prompt = (
-        "You are a senior curriculum designer. Create a structured learning roadmap.\n"
+        "You are a senior curriculum designer for modern AI Engineers. Create a structured learning roadmap.\n"
         "Return ONLY strict JSON wrapped between the tags:\n"
         "<<ROADMAP_JSON>>\n{...}\n<<END_ROADMAP_JSON>>\n"
         "No extra text before or after the tags.\n"
         "The roadmap must include hands-on deliverables and practice items.\n"
+        "MANDATORY AI ENGINEER SPINE (must appear as milestones across phases):\n"
+        "- Foundations: LLM mental models and prompt/tool fundamentals\n"
+        "- Embeddings and similarity search\n"
+        "- Vector search + index tuning\n"
+        "- Chunking strategies + document preparation\n"
+        "- RAG pipelines (retrieval + grounding)\n"
+        "- RAG evaluation (quality, latency, regressions)\n"
+        "- Agents and tool use (planning, tool routing, guardrails)\n"
+        "- Production concerns (latency, cost, monitoring, safety)\n"
+        "- Portfolio project (end-to-end AI engineer artifact)\n"
         "RESOURCE POLICY FOR ROADMAPS\n"
         "- Milestones and suggested practice must NOT depend on paid resources.\n"
         "- Prefer:\n"
@@ -603,6 +686,10 @@ def tool_generate_learning_roadmap(
         f"Goal: {goal}\n"
         f"Target intensity: {target_level}\n"
         f"Background/constraints: {background or 'none'}\n\n"
+        "Milestone resources rules:\n"
+        "- Include 0-2 optional FREE resources per milestone.\n"
+        "- Each resource must include title, owner, platform, and a search_phrase.\n"
+        "- Avoid generic titles like \"Beginner's guide to AI\".\n\n"
         "Return JSON that matches this exact schema:\n"
         "{\n"
         '  "topic": "string",\n'
@@ -623,7 +710,16 @@ def tool_generate_learning_roadmap(
         '          "estimated_hours": number,\n'
         '          "definition_of_done": ["string", ...],\n'
         '          "deliverables": ["string", ...],\n'
-        '          "suggested_practice": ["string", ...]\n'
+        '          "depth": "intro|operational",\n'
+        '          "suggested_practice": ["string", ...],\n'
+        '          "resources": [\n'
+        "            {\n"
+        '              "title": "string",\n'
+        '              "owner": "string",\n'
+        '              "platform": "string",\n'
+        '              "search_phrase": "string"\n'
+        "            }\n"
+        "          ]\n"
         "        }\n"
         "      ]\n"
         "    }\n"
@@ -637,11 +733,11 @@ def tool_generate_learning_roadmap(
     except Exception as exc:
         return {"error": f"Failed to generate roadmap: {exc}"}
 
-    extracted = extract_between(raw_output, "<<ROADMAP_JSON>>", "<<END_ROADMAP_JSON>>")
-    if extracted == raw_output.strip():
-        return {"error": "Roadmap output missing required JSON tags.", "raw_output": raw_output}
+    raw_text = raw_output.strip()
+    if "<<ROADMAP_JSON>>" in raw_text and "<<END_ROADMAP_JSON>>" in raw_text:
+        raw_text = extract_between(raw_text, "<<ROADMAP_JSON>>", "<<END_ROADMAP_JSON>>")
     try:
-        roadmap = json.loads(extracted)
+        roadmap = json.loads(raw_text)
     except json.JSONDecodeError as exc:
         return {"error": f"Failed to parse roadmap JSON: {exc}", "raw_output": raw_output}
 

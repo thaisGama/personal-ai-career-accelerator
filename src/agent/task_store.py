@@ -25,6 +25,7 @@ TASKS_HEADER = [
     "evidence_score",
     "evidence_count",
     "last_evaluated_at",
+    "learning_validated",
     "notes",
     "phase_id",
     "milestone_id",
@@ -63,6 +64,19 @@ def _parse_datetime(value: str | None) -> Optional[datetime]:
         return None
 
 
+def _parse_bool(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y"}:
+        return True
+    if text in {"0", "false", "no", "n", ""}:
+        return False
+    return False
+
+
 def _ensure_tasks_file(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -71,38 +85,67 @@ def _ensure_tasks_file(path: Path) -> None:
             writer.writerow(TASKS_HEADER)
 
 
+def ensure_tasks_file(path: Path) -> None:
+    _ensure_tasks_file(path)
+
+def _parse_task_row(row: Dict[str, str], fieldnames: set[str]) -> Dict[str, object]:
+    phase_id = row.get("phase_id", "") if "phase_id" in fieldnames else ""
+    milestone_id = row.get("milestone_id", "") if "milestone_id" in fieldnames else ""
+    roadmap_id = row.get("roadmap_id", "") if "roadmap_id" in fieldnames else ""
+    learning_validated = (
+        _parse_bool(row.get("learning_validated"))
+        if "learning_validated" in fieldnames
+        else False
+    )
+    return {
+        "task_id": row.get("task_id", ""),
+        "created_at": row.get("created_at", ""),
+        "updated_at": row.get("updated_at", ""),
+        "status": row.get("status", "TODO"),
+        "source_week": row.get("source_week", ""),
+        "title": row.get("title", ""),
+        "topic": row.get("topic", ""),
+        "estimated_minutes": _parse_int(row.get("estimated_minutes")),
+        "priority": _parse_int(row.get("priority")) or 3,
+        "prerequisites": row.get("prerequisites", ""),
+        "evidence_score": _parse_float(row.get("evidence_score")) or 0.0,
+        "evidence_count": _parse_int(row.get("evidence_count")) or 0,
+        "last_evaluated_at": row.get("last_evaluated_at", ""),
+        "learning_validated": learning_validated,
+        "notes": row.get("notes", ""),
+        "phase_id": phase_id,
+        "milestone_id": milestone_id,
+        "roadmap_id": roadmap_id,
+    }
+
+
+def ensure_tasks_schema(path: Path) -> None:
+    if not path.exists():
+        return
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        header = next(reader, [])
+    if "learning_validated" in header:
+        return
+    tasks: List[Dict[str, object]] = []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = set(reader.fieldnames or [])
+        for row in reader:
+            tasks.append(_parse_task_row(row, fieldnames))
+    save_tasks(path, tasks)
+
+
 def load_tasks(path: Path) -> List[Dict[str, object]]:
     if not path.exists():
         return []
+    ensure_tasks_schema(path)
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         tasks: List[Dict[str, object]] = []
         fieldnames = set(reader.fieldnames or [])
         for row in reader:
-            phase_id = row.get("phase_id", "") if "phase_id" in fieldnames else ""
-            milestone_id = row.get("milestone_id", "") if "milestone_id" in fieldnames else ""
-            roadmap_id = row.get("roadmap_id", "") if "roadmap_id" in fieldnames else ""
-            tasks.append(
-                {
-                    "task_id": row.get("task_id", ""),
-                    "created_at": row.get("created_at", ""),
-                    "updated_at": row.get("updated_at", ""),
-                    "status": row.get("status", "TODO"),
-                    "source_week": row.get("source_week", ""),
-                    "title": row.get("title", ""),
-                    "topic": row.get("topic", ""),
-                    "estimated_minutes": _parse_int(row.get("estimated_minutes")),
-                    "priority": _parse_int(row.get("priority")) or 3,
-                    "prerequisites": row.get("prerequisites", ""),
-                    "evidence_score": _parse_float(row.get("evidence_score")) or 0.0,
-                    "evidence_count": _parse_int(row.get("evidence_count")) or 0,
-                    "last_evaluated_at": row.get("last_evaluated_at", ""),
-                    "notes": row.get("notes", ""),
-                    "phase_id": phase_id,
-                    "milestone_id": milestone_id,
-                    "roadmap_id": roadmap_id,
-                }
-            )
+            tasks.append(_parse_task_row(row, fieldnames))
         return tasks
 
 
@@ -127,6 +170,7 @@ def save_tasks(path: Path, tasks: Iterable[Dict[str, object]]) -> None:
                     "evidence_score": f"{task.get('evidence_score', 0.0):.3f}",
                     "evidence_count": task.get("evidence_count", 0),
                     "last_evaluated_at": task.get("last_evaluated_at", ""),
+                    "learning_validated": "true" if task.get("learning_validated") else "false",
                     "notes": task.get("notes", ""),
                     "phase_id": task.get("phase_id", ""),
                     "milestone_id": task.get("milestone_id", ""),
@@ -212,7 +256,7 @@ def _extract_roadmap_tags(text: str) -> Tuple[str | None, str | None]:
 
 
 def _strip_roadmap_tags(text: str) -> str:
-    return re.sub(r"\s*\[(phase|milestone):[^\]]+\]\s*", " ", text, flags=re.IGNORECASE).strip()
+    return re.sub(r"\s*\[(phase|milestone|depth):[^\]]+\]\s*", " ", text, flags=re.IGNORECASE).strip()
 
 
 def upsert_tasks_from_plan(
@@ -276,6 +320,7 @@ def upsert_tasks_from_plan(
             "evidence_score": 0.0,
             "evidence_count": 0,
             "last_evaluated_at": "",
+            "learning_validated": False,
             "notes": "",
             "phase_id": phase_id or "",
             "milestone_id": milestone_id or "",
@@ -352,6 +397,13 @@ def update_tasks_from_quiz_results(
                     propose_done.append(str(task_id))
             else:
                 task["status"] = "IN_PROGRESS"
+
+        move_on = str(result.get("move_on_decision") or "").strip().upper() == "MOVE_ON"
+        mastery = str(result.get("mastery") or "").strip().upper() == "SOLID"
+        if move_on or mastery:
+            task["learning_validated"] = True
+            if auto_close:
+                task["status"] = "DONE"
 
         notes = result.get("notes")
         if notes:

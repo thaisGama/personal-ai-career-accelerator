@@ -161,7 +161,11 @@ Planner Agent v0.1 under development.
 - New LLM markers: `<<LEARNING_UNIT>> ... <<END_LEARNING_UNIT>>` in addition to `<<PLAN_MARKDOWN>>` and `<<MEMORY_SNIPPET>>`.
 - Saved files: `docs/learning_units/{timestamp}_{slug}.md` (timestamp matches weekly plan output).
 - Streamlit: use the **Learning Library** tab to browse and render saved learning units with section expanders.
+- Streamlit: the Weekly Planner output includes a **Debug roadmap progress** expander for milestone counts and week-number rationale.
+- Streamlit: use **Reset progress** in the sidebar to wipe tasks/quiz/memory with explicit confirmation and scope selection.
 - Resources: constrained to identifiable free sources (title + owner + platform + search phrase; no raw URLs).
+- Token controls: `PLANNER_MAX_TOKENS` (default 4500), `PLANNER_PLAN_MAX_TOKENS` (default 2200), `PLANNER_UNIT_MAX_TOKENS` (default 2800).
+- Quick test: rename `docs/learning_units` to `docs/learning_units_backup`, run `streamlit run app.py`, generate a plan, and confirm a new learning unit file and updated modified time in the UI.
 
 ---
 

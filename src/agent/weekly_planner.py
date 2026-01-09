@@ -11,10 +11,12 @@ from typing import Optional, Tuple
 from openai import OpenAI
 
 from .memory.vector_store import LocalVectorStore
-from .task_store import TaskProgressSummary, summarize_task_progress, upsert_tasks_from_plan
+from .task_store import TaskProgressSummary, load_tasks, summarize_task_progress, upsert_tasks_from_plan
 
 DEFAULT_MODEL = os.getenv("PLANNER_MODEL", "gpt-4o-mini")
-MAX_TOKENS = int(os.getenv("PLANNER_MAX_TOKENS", "1800"))
+MAX_TOKENS = int(os.getenv("PLANNER_MAX_TOKENS", "4500"))
+PLAN_MAX_TOKENS = int(os.getenv("PLANNER_PLAN_MAX_TOKENS", "2200"))
+UNIT_MAX_TOKENS = int(os.getenv("PLANNER_UNIT_MAX_TOKENS", "2800"))
 
 
 def build_weekly_planner_prompt(
@@ -29,11 +31,12 @@ def build_weekly_planner_prompt(
     task_progress: TaskProgressSummary | None = None,
     roadmap_context: str | None = None,
     roadmap_progress: str | None = None,
+    week_number: int | None = None,
     target_level: str | None = None,
     background: str | None = None,
 ) -> Tuple[str, str]:
     """Construct system and user prompts for the weekly planner agent."""
-    # Learning unit quality constraints: job-ready, operational, and depth-first rather than generic.
+    # Plan prompt stays compact; learning unit has its own dedicated prompt.
     system_prompt = """You are an AI Weekly Learning Planner. Generate a clean, motivating weekly plan that fits into 10–30 minute sessions. Return only raw Markdown (no code fences).
 
 You must BEGIN your output with EXACTLY the following MEMORY_AUDIT block (no text before it). Do not change the provided values. For the Memory focus line, write one short sentence about what from memory influenced this plan, or "None" if nothing applied:
@@ -46,39 +49,10 @@ Memory focus: <1 short sentence about what from memory influenced this plan, or 
 
 At the end of your response, add a short “memory snippet” describing the week’s focus and the key intentions in 2–4 bullet points.
 
-After the plan block and before the memory snippet, include a <<LEARNING_UNIT>> block with study-ready teaching content. It must be self-contained and include:
-- Decision lens (use when / don't use when)
-- Mental model
-- "How It Works (No Math)" section
-- Operational Playbook (How You Use This at Work)
-- 3 worked examples (strict template below)
-- Mini-project blueprint (expanded format below)
-- Optional deepening resources: max 2, free, title + platform + search phrase (no URLs)
-
-Learning unit resource rules:
-- At most 2 resources and they must be FREE.
-- Each resource must be uniquely identifiable: specific title + owner/publisher + platform + a search phrase that reliably surfaces it.
-- Avoid generic titles like "Beginner's guide to ..." or "Introduction to ..." unless paired with a unique owner/publisher and platform.
-- Format resources as: Title — Owner — Platform — search phrase: "..."
-
-Learning unit depth and length rules:
-- Target length: 800–1400 words total.
-- Intro/foundations exception: 500–900 words if the roadmap milestone explicitly signals intro/foundations.
-- Must include Operational Playbook, 3 worked examples in the strict template, and the expanded Mini-Project Blueprint (with MVP + stretch).
-- If length is short, expand Worked Examples and the Operational Playbook rather than adding history.
-
-Learning unit relevance rules:
-- Teach what is relevant to day-to-day work for the target role (default: AI Engineer / AI Generalist).
-- Do NOT go deep into research/training internals unless explicitly requested or required for the practical task.
-
-Learning unit example realism rules:
-- Prefer workplace-realistic examples (tickets, docs, tasks, logs, product requirements).
-- Use toy examples only if they directly support a practical decision.
-
 Use this exact output format (do not include explanations):
 
 <<PLAN_MARKDOWN>>
-Week X Learning Plan
+Week {WEEK_NUMBER} Learning Plan
 📌 Summary of Goals
 - One-sentence summary of the week
 - 2–3 key focus areas
@@ -174,70 +148,13 @@ Scope:
 - /posts/linkedin_week_X.md
 - /tasks/task_X.md
 <<END_PLAN>>
-<<LEARNING_UNIT>>
-# <Title of the learning unit>
-
-## Decision Lens (use when / don't use when)
-- Use when:
-- Don't use when:
-
-## Mental Model
-- <short mental model explanation>
-
-## How It Works (No Math)
-- <intuitive explanation>
-
-## Operational Playbook (How You Use This at Work)
-- Decisions you make in practice (3–7 bullets)
-- What to tune (2–5 bullets)
-- How to evaluate quality quickly (simple test set + manual review loop)
-- Common failure modes + fixes (at least 5)
-
-## Worked Examples
-- Example 1:
-  - Problem (2–3 lines)
-  - Naive approach + why it fails (bullets)
-  - Practical approach (pipeline bullets)
-  - Two tuning levers (bullets)
-  - Debug checklist (2–3 bullets)
-  - System sketch (ASCII pipeline, no code)
-- Example 2:
-  - Problem (2–3 lines)
-  - Naive approach + why it fails (bullets)
-  - Practical approach (pipeline bullets)
-  - Two tuning levers (bullets)
-  - Debug checklist (2–3 bullets)
-  - System sketch (ASCII pipeline, no code)
-- Example 3:
-  - Problem (2–3 lines)
-  - Naive approach + why it fails (bullets)
-  - Practical approach (pipeline bullets)
-  - Two tuning levers (bullets)
-  - Debug checklist (2–3 bullets)
-  - System sketch (ASCII pipeline, no code)
-
-At least 1 worked example must be anchored to the user's stated goal or current roadmap milestone.
-
-## Mini-Project Blueprint
-- Input format:
-- Data structures (example fields/tables):
-- Pipeline steps:
-- What to tune:
-- Debugging checklist (>=6 items):
-- Definition of done (DoD):
-- Timeboxing:
-  - MVP in 60–120 min:
-  - Stretch:
-
-## Deepening Resources (Optional)
-- <Title> — <Owner> — <Platform> — search phrase: "<phrase>"
-- <Title> — <Owner> — <Platform> — search phrase: "<phrase>"
-<<END_LEARNING_UNIT>>
 <<MEMORY_SNIPPET>>
 - bullet 1
 - bullet 2
 - bullet 3
 <<END_MEMORY>>
+
+Always use the exact week number shown in the heading template above.
 
 For every micro-task in the "🧩 Micro Tasks" section, assign one priority tag:
 - 🔥 High priority (critical for the week's goal)
@@ -252,7 +169,7 @@ If ROADMAP PROGRESS is provided, add a short "🧭 Roadmap Context" block right 
 - Week number (approx)
 - Remaining hours (rough estimate)
 If ROADMAP CONTEXT is provided, align micro-tasks to the current milestone and append tags to each micro-task title:
-[phase:P#][milestone:M#.#]
+[phase:P#][milestone:M#.#][depth:intro|operational]
 Learning capsule length guidance by intensity:
 - light: ~100–150 words
 - medium: ~200–300 words
@@ -267,6 +184,7 @@ STYLE RULES:
         MEMORY_USED="YES" if memory_used else "NO",
         MEMORY_SOURCE=memory_source,
         MEMORY_CHAR_COUNT=memory_char_count,
+        WEEK_NUMBER=week_number or 1,
     )
 
     task_block = ""
@@ -328,11 +246,146 @@ The user is a working parent with limited energy. Suggest a realistic plan that 
     return system_prompt, user_prompt
 
 
+def build_learning_unit_prompt(
+    goal: str,
+    preferences: str | None,
+    memory_context: str,
+    roadmap_tags: str | None,
+    roadmap_context: str | None,
+    plan_context: str | None,
+    target_level: str | None = None,
+    background: str | None = None,
+    target_role: str | None = None,
+) -> Tuple[str, str]:
+    """Construct system and user prompts for the learning unit generator."""
+    effective_role = target_role or "AI Engineer / AI Generalist"
+    system_prompt = """You are an AI Learning Unit Author. Generate a study-ready learning unit with job-ready operational depth. Return only raw Markdown (no code fences).
+
+QUALITY CONTRACT (must follow):
+1) Define-before-use: If you use a named technique/pattern/framework/term, define it in 1-3 sentences BEFORE it is used in recommendations or examples, OR define it inline at first mention.
+2) Worked example progression: Example 1 is the simplest viable approach. Example 2 adds structure (format/template/process). Example 3 adds constraints plus evaluation/debug loop.
+3) Decision Lens must be discriminative: include at least 2 "Don't use when" boundaries and mention an alternative approach/tool.
+4) Practice + self-check: Include at least one "Exercise (5-15 min)" and a "Self-check rubric" (bullets). These must not depend on external resources.
+
+Output ONLY this block (no extra text):
+
+<<LEARNING_UNIT>>
+# Learning Unit: <milestone title>
+
+## Decision Lens (use when / don't use when)
+- Use when:
+- Don't use when:
+
+## Mental Model
+- <short mental model explanation>
+
+## How It Works (No Math)
+- <intuitive explanation>
+
+## Operational Playbook (How You Use This at Work)
+- Decisions you make in practice (3–7 bullets)
+- What to tune (2–5 bullets)
+- How to evaluate quality quickly (simple test set + manual review loop)
+- Common failure modes + fixes (at least 5)
+
+## Worked Examples
+- Example 1:
+  - Problem (2–3 lines)
+  - Naive approach + why it fails (bullets)
+  - Practical approach (pipeline bullets)
+  - Two tuning levers (bullets)
+  - Debug checklist (2–3 bullets)
+  - System sketch (ASCII pipeline, no code)
+- Example 2:
+  - Problem (2–3 lines)
+  - Naive approach + why it fails (bullets)
+  - Practical approach (pipeline bullets)
+  - Two tuning levers (bullets)
+  - Debug checklist (2–3 bullets)
+  - System sketch (ASCII pipeline, no code)
+- Example 3:
+  - Problem (2–3 lines)
+  - Naive approach + why it fails (bullets)
+  - Practical approach (pipeline bullets)
+  - Two tuning levers (bullets)
+  - Debug checklist (2–3 bullets)
+  - System sketch (ASCII pipeline, no code)
+
+At least 1 worked example must be anchored to the user's stated goal or current roadmap milestone.
+At least 1 worked example must use a milestone deliverable or the user's stated project.
+
+## Mini-Project Blueprint
+- Input format:
+- Data structures (example fields/tables):
+- Pipeline steps:
+- What to tune:
+- Debugging checklist (>=6 items):
+- Definition of done (DoD):
+- Timeboxing:
+  - MVP in 60–120 min:
+  - Stretch:
+
+## Exercise (5–15 min)
+- <short, immediate practice>
+
+## Self-check rubric
+- <bullet>
+- <bullet>
+
+## Deepening Resources (Optional)
+- <Title> — <Owner> — <Platform> — search phrase: "<phrase>"
+- <Title> — <Owner> — <Platform> — search phrase: "<phrase>"
+<<END_LEARNING_UNIT>>
+
+Learning unit resource rules:
+- At most 2 resources and they must be FREE.
+- Each resource must be uniquely identifiable: specific title + owner/publisher + platform + a search phrase that reliably surfaces it.
+- Avoid generic titles like "Beginner's guide to ..." or "Introduction to ..." unless paired with a unique owner/publisher and platform.
+- Format resources as: Title — Owner — Platform — search phrase: "..."
+
+Learning unit depth and length rules:
+- Target length: 800–1400 words total.
+- Intro/foundations exception: 500–900 words if the roadmap milestone explicitly signals intro/foundations.
+- Must include Operational Playbook, 3 worked examples in the strict template, and the expanded Mini-Project Blueprint (with MVP + stretch).
+- If length is short, expand Worked Examples and the Operational Playbook rather than adding history.
+If no roadmap milestone title is provided, use "Learning Unit: <goal>" instead.
+
+Learning unit relevance rules:
+- Teach what is relevant to day-to-day work for the target role (default: AI Engineer / AI Generalist).
+- Do NOT go deep into research/training internals unless explicitly requested or required for the practical task.
+
+Learning unit example realism rules:
+- Prefer workplace-realistic examples (tickets, docs, tasks, logs, product requirements).
+- Use toy examples only if they directly support a practical decision."""
+
+    roadmap_line = f"Roadmap tags from the plan: {roadmap_tags}" if roadmap_tags else "Roadmap tags from the plan: none"
+    roadmap_context_block = roadmap_context or "Roadmap context: not provided."
+    plan_context_block = plan_context or "Plan context: not provided."
+    user_prompt = f"""Goal for the week: {goal}
+Target role: {effective_role}
+Learning intensity: {target_level or 'medium'}
+Background / constraints: {background or 'none'}
+Preferences: {preferences or 'none'}
+{roadmap_line}
+
+Current roadmap milestone context (use for the title and worked examples):
+{roadmap_context_block}
+
+Use this context to anchor at least one worked example to the user's goal or roadmap milestone:
+{plan_context_block}
+
+Additional memory context (if relevant):
+{memory_context or 'none'}"""
+
+    return system_prompt, user_prompt
+
+
 def call_llm(
     system_prompt: str,
     user_prompt: str,
     model: str = DEFAULT_MODEL,
     temperature: float = 0.5,
+    max_tokens: int | None = None,
 ) -> str:
     """Call OpenAI's chat completions API and return the assistant markdown string."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -347,7 +400,7 @@ def call_llm(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=MAX_TOKENS,
+            max_tokens=max_tokens or MAX_TOKENS,
             temperature=temperature,
         )
     except Exception as exc:  # pragma: no cover - network/API path
@@ -390,6 +443,31 @@ def extract_learning_unit(text: str) -> str:
     return extract_between(text, "<<LEARNING_UNIT>>", "<<END_LEARNING_UNIT>>")
 
 
+def _extract_roadmap_tags(plan_markdown: str) -> str | None:
+    phase_tags = re.findall(r"\[phase:([^\]]+)\]", plan_markdown, flags=re.IGNORECASE)
+    milestone_tags = re.findall(r"\[milestone:([^\]]+)\]", plan_markdown, flags=re.IGNORECASE)
+    depth_tags = re.findall(r"\[depth:([^\]]+)\]", plan_markdown, flags=re.IGNORECASE)
+    phases = sorted({tag.strip() for tag in phase_tags if tag.strip()})
+    milestones = sorted({tag.strip() for tag in milestone_tags if tag.strip()})
+    depths = sorted({tag.strip() for tag in depth_tags if tag.strip()})
+    if not phases and not milestones and not depths:
+        return None
+    parts = []
+    if phases:
+        parts.append(f"phases={', '.join(phases)}")
+    if milestones:
+        parts.append(f"milestones={', '.join(milestones)}")
+    if depths:
+        parts.append(f"depths={', '.join(depths)}")
+    return "; ".join(parts)
+
+
+def _truncate_text(text: str, max_chars: int = 1200) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "..."
+
+
 def format_weekly_plan(raw_text: str) -> str:
     """Clean the raw LLM response and ensure it is plain Markdown."""
     content = raw_text.strip()
@@ -406,6 +484,171 @@ def format_weekly_plan(raw_text: str) -> str:
         content = "# Week Plan\n\n" + content
 
     return content
+
+
+def enforce_week_heading(markdown: str, week_number: int) -> str:
+    heading = f"# Week {week_number} Learning Plan"
+    lines = markdown.splitlines()
+    if not lines:
+        return heading
+    if lines[0].lstrip().startswith("#"):
+        lines[0] = heading
+        return "\n".join(lines)
+    return "\n".join([heading, ""] + lines)
+
+
+def check_learning_unit_quality(md: str) -> dict:
+    issues: list[str] = []
+    missing_definitions: list[str] = []
+
+    def _has_section(label: str) -> bool:
+        return re.search(rf"^##\s+{re.escape(label)}\b", md, flags=re.IGNORECASE | re.MULTILINE) is not None
+
+    def _section_text(label: str) -> str:
+        pattern = re.compile(rf"^##\s+{re.escape(label)}\b.*$", flags=re.IGNORECASE | re.MULTILINE)
+        match = pattern.search(md)
+        if not match:
+            return ""
+        start = match.end()
+        next_match = re.search(r"^##\s+", md[start:], flags=re.MULTILINE)
+        end = start + next_match.start() if next_match else len(md)
+        return md[start:end].strip()
+
+    required_sections = [
+        "Decision Lens",
+        "Worked Examples",
+        "Mini-Project Blueprint",
+    ]
+    for section in required_sections:
+        if not _has_section(section):
+            issues.append(f"missing_section:{section}")
+
+    exercise_marker = re.search(r"\bexercise\b|\btry this\b", md, flags=re.IGNORECASE)
+    self_check_marker = re.search(r"\bself-check\b|\brubric\b|\bchecklist\b", md, flags=re.IGNORECASE)
+    has_exercise_and_selfcheck = bool(exercise_marker and self_check_marker)
+    if not has_exercise_and_selfcheck:
+        issues.append("missing_exercise_or_selfcheck")
+
+    worked_examples = _section_text("Worked Examples")
+    example_progression_ok = True
+    if not re.search(r"Example\s+1", worked_examples, flags=re.IGNORECASE):
+        example_progression_ok = False
+    if not re.search(r"Example\s+2", worked_examples, flags=re.IGNORECASE):
+        example_progression_ok = False
+    if not re.search(r"Example\s+3", worked_examples, flags=re.IGNORECASE):
+        example_progression_ok = False
+    if example_progression_ok:
+        ex1 = re.split(r"Example\s+2", worked_examples, flags=re.IGNORECASE)[0]
+        ex2_parts = re.split(r"Example\s+2", worked_examples, flags=re.IGNORECASE)
+        ex2 = ex2_parts[1] if len(ex2_parts) > 1 else ""
+        ex2 = re.split(r"Example\s+3", ex2, flags=re.IGNORECASE)[0]
+        ex3_parts = re.split(r"Example\s+3", worked_examples, flags=re.IGNORECASE)
+        ex3 = ex3_parts[1] if len(ex3_parts) > 1 else ""
+
+        if not re.search(r"\b(simple|naive|baseline)\b", ex1, flags=re.IGNORECASE):
+            example_progression_ok = False
+        if not re.search(r"\b(template|format|steps|schema|structured)\b", ex2, flags=re.IGNORECASE):
+            example_progression_ok = False
+        if not re.search(
+            r"\b(constraints|evaluation|debug|checklist|tests|rubric)\b", ex3, flags=re.IGNORECASE
+        ):
+            example_progression_ok = False
+    if not example_progression_ok:
+        issues.append("example_progression_failed")
+
+    decision_lens_text = _section_text("Decision Lens")
+    decision_lens_ok = True
+    use_count = 0
+    dont_count = 0
+    mode = None
+    for line in decision_lens_text.splitlines():
+        line_stripped = line.strip()
+        if line_stripped.lower().startswith("- use when") or line_stripped.lower().startswith("use when"):
+            mode = "use"
+            continue
+        if line_stripped.lower().startswith("- don't use when") or line_stripped.lower().startswith("don't use when"):
+            mode = "dont"
+            continue
+        if line_stripped.startswith("-"):
+            if mode == "use":
+                use_count += 1
+            elif mode == "dont":
+                dont_count += 1
+    boundary_markers = [
+        "deterministic",
+        "compliance",
+        "hard guarantee",
+        "hard guarantees",
+        "requires training",
+        "use a",
+        "use an",
+        "alternative",
+        "script",
+    ]
+    boundary_ok = any(marker in decision_lens_text.lower() for marker in boundary_markers)
+    if use_count < 2 or dont_count < 2 or not boundary_ok:
+        decision_lens_ok = False
+    if not decision_lens_ok:
+        issues.append("decision_lens_not_discriminative")
+
+    def _collect_named_terms(text: str) -> list[str]:
+        terms: set[str] = set()
+        for match in re.findall(r"\b\w+-shot\b", text, flags=re.IGNORECASE):
+            terms.add(match)
+        for match in re.findall(
+            r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b",
+            text,
+        ):
+            terms.add(match)
+        for match in re.findall(
+            r"\b[\w-]*(prompting|strategy|pattern|framework|heuristic|protocol|pipeline|approach|baseline)\b",
+            text,
+            flags=re.IGNORECASE,
+        ):
+            terms.add(match)
+        return sorted(terms)
+
+    def _has_definition(term: str, text: str) -> bool:
+        term_re = re.compile(rf"\b{re.escape(term)}\b", flags=re.IGNORECASE)
+        for paragraph in re.split(r"\n\s*\n", text):
+            if term_re.search(paragraph) and re.search(
+                r"\b(means|refers to|defined as|is)\b",
+                paragraph,
+                flags=re.IGNORECASE,
+            ):
+                return True
+        return False
+
+    operational_text = "\n".join(
+        [
+            _section_text("Operational Playbook"),
+            worked_examples,
+        ]
+    )
+    intro_text = md.split("## Operational Playbook")[0] if "## Operational Playbook" in md else md
+    for term in _collect_named_terms(md):
+        term_re = re.compile(rf"\b{re.escape(term)}\b", flags=re.IGNORECASE)
+        if not term_re.search(operational_text):
+            continue
+        operational_idx = term_re.search(operational_text).start()
+        if _has_definition(term, intro_text):
+            continue
+        if _has_definition(term, operational_text[:operational_idx + len(term) + 80]):
+            continue
+        missing_definitions.append(term)
+
+    if missing_definitions:
+        issues.append("missing_definitions")
+
+    ok = not issues
+    return {
+        "ok": ok,
+        "issues": issues,
+        "missing_definitions": missing_definitions,
+        "example_progression_ok": example_progression_ok,
+        "decision_lens_ok": decision_lens_ok,
+        "has_exercise_and_selfcheck": has_exercise_and_selfcheck,
+    }
 
 
 def save_weekly_plan(
@@ -497,7 +740,7 @@ def save_week_files(
     plan_dir.mkdir(parents=True, exist_ok=True)
     posts_dir.mkdir(parents=True, exist_ok=True)
 
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     plan_path = plan_dir / f"week_{ts}_plan.md"
     linkedin_path = posts_dir / f"linkedin_week_{ts}.md"
 
@@ -512,6 +755,8 @@ def save_week_files(
             timestamp=ts,
             slug_source=learning_unit_slug_source or learning_unit_md,
         )
+        learning_unit_mtime = os.path.getmtime(learning_unit_path)
+        print(f"Learning unit saved to {learning_unit_path} (mtime={learning_unit_mtime})")
 
     return plan_path, linkedin_path, learning_unit_path
 
@@ -548,11 +793,124 @@ def save_learning_unit(
     return path
 
 
+def generate_weekly_plan_and_learning_unit(
+    goal: str,
+    time_per_week_hours: float,
+    max_session_minutes: int,
+    preferences: str | None,
+    memory_context: str,
+    memory_used: bool,
+    memory_source: str,
+    memory_char_count: int,
+    task_progress: TaskProgressSummary | None = None,
+    roadmap_context: str | None = None,
+    roadmap_progress: str | None = None,
+    week_number: int | None = None,
+    target_level: str | None = None,
+    background: str | None = None,
+    model: str = DEFAULT_MODEL,
+) -> dict:
+    """Generate the weekly plan and learning unit via separate LLM calls."""
+    plan_system_prompt, plan_user_prompt = build_weekly_planner_prompt(
+        goal=goal,
+        time_per_week_hours=time_per_week_hours,
+        max_session_minutes=max_session_minutes,
+        preferences=preferences,
+        memory_context=memory_context,
+        memory_used=memory_used,
+        memory_source=memory_source,
+        memory_char_count=memory_char_count,
+        task_progress=task_progress,
+        roadmap_context=roadmap_context,
+        roadmap_progress=roadmap_progress,
+        week_number=week_number,
+        target_level=target_level,
+        background=background,
+    )
+
+    raw_plan_output = call_llm(
+        system_prompt=plan_system_prompt,
+        user_prompt=plan_user_prompt,
+        model=model,
+        max_tokens=PLAN_MAX_TOKENS,
+    )
+    memory_audit_block = raw_plan_output.split("<<PLAN_MARKDOWN>>", 1)[0].strip()
+    plan_text = extract_between(raw_plan_output, "<<PLAN_MARKDOWN>>", "<<END_PLAN>>")
+    memory_snippet = extract_between(raw_plan_output, "<<MEMORY_SNIPPET>>", "<<END_MEMORY>>")
+
+    formatted_markdown = format_weekly_plan(plan_text)
+    formatted_markdown = enforce_week_heading(formatted_markdown, week_number or 1)
+    if memory_audit_block:
+        formatted_markdown = f"{memory_audit_block}\n\n{formatted_markdown}"
+    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
+
+    roadmap_tags = _extract_roadmap_tags(plan_markdown)
+    plan_context = _truncate_text(plan_markdown, max_chars=1400)
+    unit_system_prompt, unit_user_prompt = build_learning_unit_prompt(
+        goal=goal,
+        preferences=preferences,
+        memory_context=_truncate_text(memory_context, max_chars=1000),
+        roadmap_tags=roadmap_tags,
+        roadmap_context=_truncate_text(roadmap_context or "", max_chars=1000) if roadmap_context else None,
+        plan_context=f"Plan context (excerpt):\n{plan_context}",
+        target_level=target_level,
+        background=background,
+    )
+
+    raw_learning_unit_output = call_llm(
+        system_prompt=unit_system_prompt,
+        user_prompt=unit_user_prompt,
+        model=model,
+        max_tokens=UNIT_MAX_TOKENS,
+    )
+    learning_unit_md = extract_learning_unit(raw_learning_unit_output)
+    if not learning_unit_md:
+        learning_unit_md = raw_learning_unit_output.strip()
+    if not learning_unit_md:
+        learning_unit_md = "# Learning Unit\n\nLearning unit generation failed."
+
+    quality = check_learning_unit_quality(learning_unit_md)
+    if not quality.get("ok"):
+        print(f"Learning unit quality issues: {quality.get('issues')}")
+        retry_prompt = (
+            f"{unit_user_prompt}\n\nQUALITY FIX REQUIRED: Fix these issues: "
+            f"{', '.join(quality.get('issues', []))}. "
+            f"Define missing terms before use: {', '.join(quality.get('missing_definitions', []))}. "
+            "Ensure examples progress baseline -> structured -> constrained + evaluation. "
+            "Add an exercise and self-check rubric."
+        )
+        raw_retry_output = call_llm(
+            system_prompt=unit_system_prompt,
+            user_prompt=retry_prompt,
+            model=model,
+            max_tokens=UNIT_MAX_TOKENS,
+        )
+        learning_unit_md = extract_learning_unit(raw_retry_output) or raw_retry_output.strip()
+        if not learning_unit_md:
+            learning_unit_md = "# Learning Unit\n\nLearning unit generation failed."
+        retry_quality = check_learning_unit_quality(learning_unit_md)
+        if not retry_quality.get("ok"):
+            print(f"Learning unit retry issues: {retry_quality.get('issues')}")
+
+    return {
+        "plan_markdown": plan_markdown,
+        "linkedin_markdown": linkedin_markdown,
+        "memory_snippet": memory_snippet,
+        "learning_unit_md": learning_unit_md,
+        "raw_plan_output": raw_plan_output,
+        "raw_learning_unit_output": raw_learning_unit_output,
+    }
+
+
 def generate_and_save_week(
     goal: str,
     time_per_week_hours: float,
     max_session_minutes: int = 30,
     preferences: str | None = None,
+    target_level: str | None = None,
+    background: str | None = None,
+    roadmap_id: str | None = None,
+    force_regenerate_roadmap: bool = False,
     model: str = DEFAULT_MODEL,
     base_dir: Path | str = ".",
 ) -> dict:
@@ -586,7 +944,80 @@ def generate_and_save_week(
     tasks_path = Path(base_dir) / "data" / "tasks.csv"
     task_progress = summarize_task_progress(tasks_path)
 
-    system_prompt, user_prompt = build_weekly_planner_prompt(
+    roadmap_context = None
+    roadmap_progress = None
+    week_number = None
+    roadmap_meta = {}
+    roadmap_path = ""
+    roadmap = None
+    effective_roadmap_id = ""
+    try:
+        from . import tools as tools_module
+
+        if force_regenerate_roadmap:
+            roadmap_result = tools_module.tool_generate_learning_roadmap(
+                goal=goal,
+                target_level=target_level or "medium",
+                background=background,
+                roadmap_id=roadmap_id,
+                base_dir=Path(base_dir),
+                model=model,
+            )
+            roadmap = roadmap_result.get("roadmap")
+            roadmap_path = roadmap_result.get("path", "")
+            effective_roadmap_id = roadmap_result.get("roadmap_id") or ""
+        else:
+            load_result = tools_module.tool_load_learning_roadmap(
+                goal=goal,
+                base_dir=Path(base_dir),
+                roadmap_id=roadmap_id,
+                force_regenerate=False,
+            )
+            roadmap = load_result.get("roadmap")
+            roadmap_path = load_result.get("path", "")
+            if not roadmap:
+                roadmap_result = tools_module.tool_generate_learning_roadmap(
+                    goal=goal,
+                    target_level=target_level or "medium",
+                    background=background,
+                    roadmap_id=roadmap_id,
+                    base_dir=Path(base_dir),
+                    model=model,
+                )
+                roadmap = roadmap_result.get("roadmap")
+                roadmap_path = roadmap_result.get("path", "")
+                effective_roadmap_id = roadmap_result.get("roadmap_id") or ""
+    except Exception:
+        roadmap = None
+
+    if roadmap:
+        effective_roadmap_id = effective_roadmap_id or tools_module._infer_roadmap_id(goal, roadmap_id, roadmap_path)
+        progress = tools_module._compute_roadmap_progress(
+            roadmap, load_tasks(tasks_path), time_per_week_hours, effective_roadmap_id
+        )
+        roadmap_context = tools_module._format_roadmap_context(roadmap, progress)
+        roadmap_progress = tools_module._format_roadmap_progress(roadmap, progress)
+        week_number = progress.get("week_number")
+        roadmap_meta = {
+            "roadmap_path": roadmap_path or "",
+            "roadmap_id": effective_roadmap_id,
+            "total_estimated_hours": roadmap.get("total_estimated_hours"),
+            "estimated_weeks_at_hours_per_week": roadmap.get("estimated_weeks_at_hours_per_week"),
+            "phase_count": len(roadmap.get("phases", [])),
+            "current_phase": progress.get("current_phase_id"),
+            "current_milestone": progress.get("current_milestone_id"),
+            "remaining_hours": progress.get("remaining_hours"),
+            "week_number": progress.get("week_number"),
+            "completed_hours": progress.get("completed_hours"),
+            "completed_milestones": progress.get("completed_milestones"),
+            "computed_week_number": progress.get("computed_week_number"),
+            "milestone_task_counts": progress.get("milestone_task_counts"),
+            "milestone_completion_mode": progress.get("milestone_completion_mode"),
+            "used_hours_per_week": progress.get("used_hours_per_week"),
+            "debug_notes": progress.get("debug_notes"),
+        }
+
+    generation = generate_weekly_plan_and_learning_unit(
         goal=goal,
         time_per_week_hours=time_per_week_hours,
         max_session_minutes=max_session_minutes,
@@ -596,18 +1027,17 @@ def generate_and_save_week(
         memory_source=memory_source,
         memory_char_count=memory_char_count,
         task_progress=task_progress,
+        roadmap_context=roadmap_context,
+        roadmap_progress=roadmap_progress,
+        week_number=week_number,
+        target_level=target_level,
+        background=background,
+        model=model,
     )
-
-    raw_markdown = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
-    memory_audit_block = raw_markdown.split("<<PLAN_MARKDOWN>>", 1)[0].strip()
-    plan_text = extract_between(raw_markdown, "<<PLAN_MARKDOWN>>", "<<END_PLAN>>")
-    learning_unit_md = extract_learning_unit(raw_markdown)
-    memory_snippet = extract_between(raw_markdown, "<<MEMORY_SNIPPET>>", "<<END_MEMORY>>")
-
-    formatted_markdown = format_weekly_plan(plan_text)
-    if memory_audit_block:
-        formatted_markdown = f"{memory_audit_block}\n\n{formatted_markdown}"
-    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
+    plan_markdown = generation["plan_markdown"]
+    linkedin_markdown = generation["linkedin_markdown"]
+    memory_snippet = generation["memory_snippet"]
+    learning_unit_md = generation["learning_unit_md"]
 
     upsert_tasks_from_plan(
         plan_md=plan_markdown,
@@ -616,26 +1046,13 @@ def generate_and_save_week(
         default_priority=3,
     )
 
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    plan_path = save_weekly_plan(
-        markdown=plan_markdown,
-        output_dir=Path(base_dir) / "weekly_plans",
-        filename=f"week_plan_{ts}.md",
+    plan_path, linkedin_path, learning_unit_path = save_week_files(
+        plan_markdown=plan_markdown,
+        linkedin_markdown=linkedin_markdown,
+        base_dir=base_dir,
+        learning_unit_md=learning_unit_md,
+        learning_unit_slug_source=goal,
     )
-
-    posts_dir = Path(base_dir) / "posts"
-    posts_dir.mkdir(parents=True, exist_ok=True)
-    linkedin_path = posts_dir / f"linkedin_week_{date.today().isoformat()}.md"
-    linkedin_path.write_text(linkedin_markdown.strip(), encoding="utf-8")
-
-    learning_unit_path = None
-    if learning_unit_md:
-        learning_unit_path = save_learning_unit(
-            markdown=learning_unit_md,
-            base_dir=Path(base_dir),
-            timestamp=ts,
-            slug_source=goal,
-        )
 
     if memory_snippet:
         memory_path = append_memory_snippet(memory_snippet, path=memory_path)
@@ -651,9 +1068,24 @@ def generate_and_save_week(
     return {
         "plan_path": plan_path,
         "linkedin_path": linkedin_path,
-        "raw_markdown": raw_markdown,
+        "raw_markdown": generation.get("raw_plan_output", ""),
         "memory_path": memory_path,
         "learning_unit_path": learning_unit_path,
+        "roadmap_path": roadmap_meta.get("roadmap_path", ""),
+        "roadmap_total_hours": roadmap_meta.get("total_estimated_hours"),
+        "roadmap_estimated_weeks": roadmap_meta.get("estimated_weeks_at_hours_per_week"),
+        "roadmap_phase_count": roadmap_meta.get("phase_count"),
+        "roadmap_current_phase": roadmap_meta.get("current_phase"),
+        "roadmap_current_milestone": roadmap_meta.get("current_milestone"),
+        "roadmap_remaining_hours": roadmap_meta.get("remaining_hours"),
+        "roadmap_week_number": roadmap_meta.get("week_number"),
+        "roadmap_completed_hours": roadmap_meta.get("completed_hours"),
+        "roadmap_completed_milestones": roadmap_meta.get("completed_milestones"),
+        "roadmap_computed_week_number": roadmap_meta.get("computed_week_number"),
+        "roadmap_milestone_task_counts": roadmap_meta.get("milestone_task_counts"),
+        "roadmap_completion_mode": roadmap_meta.get("milestone_completion_mode"),
+        "roadmap_used_hours_per_week": roadmap_meta.get("used_hours_per_week"),
+        "roadmap_debug_notes": roadmap_meta.get("debug_notes"),
     }
 
 
