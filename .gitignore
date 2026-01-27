@@ -208,8 +208,14 @@ __marimo__/
 
 # ignore docs
 weekly_plans/
-docs/
+docs/examples/*
+docs/learning_units/*
+docs/learning_units_backup/*
+docs/quizzes/*
+docs/roadmap.md
+docs/memory.md
 posts/
 *.csv
 data/*
 tests/fixtures/sample_quiz_results.json
+roadmaps/*
