@@ -1,57 +1,27 @@
 import json
-import re
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
 import src.agent.learning_check as learning_check
-import src.agent.react_agent as react_agent
 from src.agent.tools import (
-    tool_load_tasks,
     tool_mark_done,
     tool_select_quiz_tasks,
     tool_summarize_task_progress,
-    tool_update_tasks_from_quiz_results,
 )
 from src.agent.reset_utils import resolve_reset_paths, resolve_tasks_path
 from src.agent.task_store import ensure_tasks_file
 import src.agent.weekly_planner as weekly_planner
-
-
-def parse_quiz_sections(text: str) -> dict:
-    """
-    Extract quiz sections by tags. Returns dict with keys:
-    quiz, answer_key, rubric, follow_up, raw. Falls back gracefully.
-    """
-
-    def _between(src: str, start: str, end: str | None) -> str | None:
-        start_idx = src.find(start)
-        if start_idx == -1:
-            return None
-        start_idx += len(start)
-        if end:
-            end_idx = src.find(end, start_idx)
-            if end_idx == -1:
-                return src[start_idx:].strip()
-            return src[start_idx:end_idx].strip()
-        return src[start_idx:].strip()
-
-    quiz = _between(text, "<<QUIZ>>", "<<ANSWER_KEY>>")
-    if quiz is None:
-        quiz = _between(text, "<<QUIZ>>", None)
-    answer = _between(text, "<<ANSWER_KEY>>", "<<RUBRIC>>")
-    rubric = _between(text, "<<RUBRIC>>", "<<FOLLOW_UP>>")
-    follow = _between(text, "<<FOLLOW_UP>>", None)
-
-    return {
-        "quiz": quiz.strip() if quiz else None,
-        "answer_key": answer.strip() if answer else None,
-        "rubric": rubric.strip() if rubric else None,
-        "follow_up": follow.strip() if follow else None,
-        "raw": text,
-    }
+from src.core.io.quiz_results_store import append_quiz_results
+from src.core.parsing.quiz_parsing import parse_questions, parse_quiz_sections
+from src.core.services.planner_service import run_weekly_planner_service
+from src.core.services.quiz_service import (
+    evaluate_quiz_service,
+    generate_quiz_service,
+    update_tasks_from_quiz_service,
+)
 
 
 def _safe_delete_path(path: Path, base_dir: Path) -> tuple[bool, str]:
@@ -84,101 +54,7 @@ def _collect_reset_targets(scope: str, base_dir: Path) -> list[Path]:
     return targets
 
 
-def parse_questions(quiz_text: str, task_ids: list[str] | None = None) -> tuple[str | None, list[dict]]:
-    """
-    Parse quiz text into (title, questions).
-    Each question dict: {id: int, prompt, options, type}
-    """
-    lines = [line.strip() for line in quiz_text.splitlines() if line.strip()]
-
-    title = None
-    timebox = None
-    start_idx = 0
-    q_start_pattern = re.compile(r"^\s*[-*•]?\s*q?\s*([0-9]+)[\)\.:\-]\s*(.+)", flags=re.IGNORECASE)
-
-    # Capture title/timebox until first question
-    for idx, line in enumerate(lines):
-        if q_start_pattern.match(line):
-            start_idx = idx
-            break
-        if not title:
-            title = line.strip("<> ")
-        if line.lower().startswith("timebox"):
-            timebox = line
-    else:
-        start_idx = len(lines)
-
-    question_blocks: list[list[str]] = []
-    current: list[str] = []
-    for line in lines[start_idx:]:
-        if q_start_pattern.match(line) and current:
-            question_blocks.append(current)
-            current = [line]
-        else:
-            current.append(line)
-    if current:
-        question_blocks.append(current)
-
-    questions: list[dict] = []
-    opt_pattern = re.compile(r"^\s*[-*•]?\s*([A-Z])\)\s*(.+)")
-    task_pattern = re.compile(r"\[task_id:([^\]]+)\]", flags=re.IGNORECASE)
-
-    for block in question_blocks:
-        if not block:
-            continue
-        stem_line = block[0]
-        stem_match = q_start_pattern.match(stem_line)
-        if not stem_match:
-            continue
-        qid_num = int(stem_match.group(1))
-        prompt_parts = [stem_match.group(2).strip()]
-        options: list[str] = []
-        for line in block[1:]:
-            opt_match = opt_pattern.match(line)
-            if opt_match:
-                options.append(f"{opt_match.group(1)}) {opt_match.group(2).strip()}")
-            else:
-                prompt_parts.append(line.strip())
-        prompt = "\n".join([p for p in prompt_parts if p]).strip()
-        task_id = None
-        task_match = task_pattern.search(prompt)
-        if task_match:
-            task_id = task_match.group(1).strip()
-            prompt = task_pattern.sub("", prompt).strip()
-        lower_prompt = prompt.lower()
-
-        if "true or false" in lower_prompt:
-            qtype = "truefalse"
-            options = ["True", "False"]
-        elif options:
-            qtype = "multi" if ("select all" in lower_prompt or "choose all" in lower_prompt) else "single"
-        else:
-            qtype = "open"
-
-        questions.append({"id": qid_num, "prompt": prompt, "options": options, "type": qtype, "task_id": task_id})
-
-    # Store timebox alongside title if available
-    if timebox and title:
-        title = f"{title} — {timebox}"
-    elif timebox:
-        title = timebox
-
-    if task_ids:
-        for idx, question in enumerate(questions):
-            if question.get("task_id"):
-                continue
-            question["task_id"] = task_ids[idx % len(task_ids)]
-
-    return title, questions
-
-
 BASE_DIR = Path(__file__).resolve().parent
-
-
-def ensure_data_dir():
-    data_dir = BASE_DIR / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir
 
 
 def _list_files_sorted(directory: Path, pattern: str) -> list[Path]:
@@ -190,96 +66,6 @@ def _list_files_sorted(directory: Path, pattern: str) -> list[Path]:
 
 def _format_mtime(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def append_quiz_results(results: list[dict], base_dir: Path) -> Path:
-    data_dir = ensure_data_dir()
-    path = data_dir / "quiz_results.jsonl"
-    with path.open("a", encoding="utf-8") as handle:
-        for entry in results:
-            handle.write(json.dumps(entry, ensure_ascii=True) + "\n")
-    return path
-
-
-def run_planner(
-    goal: str,
-    hours_per_week: float,
-    max_session_minutes: int,
-    preferences: str,
-    intensity: str,
-    background: str,
-    roadmap_id: str,
-    force_regenerate_roadmap: bool,
-    model: str,
-    use_agent: bool,
-    mock_actions_path: str | None,
-    enable_critic: bool,
-):
-    ensure_data_dir()
-
-    if use_agent:
-        preferences_payload = {
-            "text": preferences or "",
-            "target_level": intensity,
-            "background": background or "",
-            "roadmap_id": roadmap_id or "",
-            "force_regenerate_roadmap": force_regenerate_roadmap,
-        }
-        mock_path = Path(mock_actions_path) if mock_actions_path else None
-        result = react_agent.run_weekly_planner_agent_react(
-            goal=goal,
-            hours_per_week=hours_per_week,
-            max_session_minutes=max_session_minutes,
-            preferences=preferences_payload,
-            model=model,
-            base_dir=BASE_DIR,
-            mock_actions_path=mock_path,
-            enable_critic=enable_critic,
-        )
-        plan_path_str = result.get("weekly_plan_path") or result.get("plan_path", "")
-        linkedin_path_str = result.get("linkedin_path", "")
-        plan_path = Path(plan_path_str) if plan_path_str else None
-        linkedin_path = Path(linkedin_path_str) if linkedin_path_str else None
-        plan_md = plan_path.read_text(encoding="utf-8") if plan_path and plan_path.is_file() else ""
-        linkedin_md = (
-            linkedin_path.read_text(encoding="utf-8") if linkedin_path and linkedin_path.is_file() else ""
-        )
-        if plan_path:
-            result["plan_path"] = plan_path.as_posix()
-        return result, plan_md, linkedin_md
-
-    enriched_preferences = preferences or ""
-    if intensity or background:
-        enriched_preferences = (
-            f"{enriched_preferences}\n\nLearning intensity: {intensity}\nBackground: {background or 'none'}"
-        ).strip()
-
-    result = weekly_planner.generate_and_save_week(
-        goal=goal,
-        time_per_week_hours=hours_per_week,
-        max_session_minutes=max_session_minutes,
-        preferences=enriched_preferences,
-        target_level=intensity,
-        background=background,
-        roadmap_id=roadmap_id or None,
-        force_regenerate_roadmap=force_regenerate_roadmap,
-        model=model,
-        base_dir=BASE_DIR,
-    )
-
-    raw_md = result.get("raw_markdown", "")
-
-    try:
-        memory_audit_block = raw_md.split("<<PLAN_MARKDOWN>>", 1)[0].strip()
-        plan_text = weekly_planner.extract_between(raw_md, "<<PLAN_MARKDOWN>>", "<<END_PLAN>>")
-        formatted = weekly_planner.format_weekly_plan(plan_text)
-        if memory_audit_block:
-            formatted = f"{memory_audit_block}\n\n{formatted}"
-        plan_md, linkedin_md = weekly_planner.split_markdown_into_plan_and_linkedin(formatted)
-    except Exception:
-        plan_md, linkedin_md = raw_md, ""
-
-    return result, plan_md, linkedin_md
 
 
 st.set_page_config(page_title="AI Career Accelerator", layout="wide")
@@ -472,20 +258,25 @@ if generate:
                 effective_roadmap_id = active_path.stem
 
         effective_mock_path = mock_actions_path if use_agent_loop and use_mock_actions else None
-        result, plan_md, linkedin_md = run_planner(
+        mock_path = Path(effective_mock_path) if effective_mock_path else None
+        service_output = run_weekly_planner_service(
             goal=goal,
             hours_per_week=hours_per_week,
             max_session_minutes=max_session_minutes,
-            preferences=preferences,
+            preferences_text=preferences,
             intensity=learning_intensity,
             background=background,
             roadmap_id=effective_roadmap_id,
             force_regenerate_roadmap=force_regenerate_roadmap,
             model=planner_model,
-            use_agent=use_agent_loop,
-            mock_actions_path=effective_mock_path,
+            use_agent_loop=use_agent_loop,
+            mock_actions_path=mock_path,
             enable_critic=enable_critic,
+            base_dir=BASE_DIR,
         )
+        result = service_output.get("result", {})
+        plan_md = service_output.get("plan_md", "")
+        linkedin_md = service_output.get("linkedin_md", "")
 
     st.session_state["planner_result"] = result
     st.session_state["planner_plan_md"] = plan_md
@@ -842,7 +633,7 @@ with quiz_tab:
                     combined_context = quiz_context
                     if tasks_context:
                         combined_context = f"{combined_context}\n\n{tasks_context}".strip()
-                    quiz_result = learning_check.generate_micro_quiz(
+                    quiz_result = generate_quiz_service(
                         topic=quiz_topic,
                         context_text=combined_context,
                         tasks=selected_tasks if selected_tasks else None,
@@ -966,7 +757,7 @@ with quiz_tab:
         else:
             with st.spinner("Evaluating..."):
                 try:
-                    eval_result = learning_check.evaluate_micro_quiz(
+                    eval_result = evaluate_quiz_service(
                         topic=quiz_topic,
                         quiz_markdown=quiz_md,
                         learner_answers=answers_payload,
@@ -979,36 +770,18 @@ with quiz_tab:
                     st.session_state["quiz_eval_decision"] = eval_result.get("move_on_decision")
                     st.session_state["quiz_unlocked"] = True
                     if use_tasks and st.session_state.get("quiz_task_ids"):
-                        score = eval_result.get("score") or 0.0
-                        score_ratio = float(score) / 10.0
-                        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-                        quiz_results = [
-                            {
-                                "task_id": task_id,
-                                "score": score_ratio,
-                                "notes": f"quiz_score={score_ratio:.2f} mastery={eval_result.get('mastery')}",
-                                "timestamp": timestamp,
-                                "mastery": eval_result.get("mastery"),
-                                "move_on_decision": eval_result.get("move_on_decision"),
-                            }
-                            for task_id in st.session_state.get("quiz_task_ids", [])
-                        ]
-                        update_result = tool_update_tasks_from_quiz_results(
+                        task_ids_for_update = st.session_state.get("quiz_task_ids", [])
+                        update_summary = update_tasks_from_quiz_service(
+                            task_ids=task_ids_for_update,
+                            eval_result=eval_result,
                             tasks_path=BASE_DIR / "data" / "tasks.csv",
-                            quiz_results=quiz_results,
                             auto_close=False,
                         )
+                        update_result = update_summary.get("update_result", {})
+                        quiz_results = update_summary.get("quiz_results", [])
                         st.session_state["quiz_task_update"] = update_result
-                        st.session_state["quiz_propose_done"] = update_result.get("propose_done", [])
-                        tasks_payload = tool_load_tasks(path=BASE_DIR / "data" / "tasks.csv")
-                        status_map = {
-                            task.get("task_id"): task.get("status")
-                            for task in tasks_payload.get("tasks", [])
-                        }
-                        st.session_state["quiz_task_statuses"] = [
-                            (task_id, status_map.get(task_id, "UNKNOWN"))
-                            for task_id in st.session_state.get("quiz_task_ids", [])
-                        ]
+                        st.session_state["quiz_propose_done"] = update_summary.get("propose_done", [])
+                        st.session_state["quiz_task_statuses"] = update_summary.get("statuses", [])
                         append_quiz_results(quiz_results, base_dir=BASE_DIR)
                 except Exception as exc:  # pragma: no cover - runtime path
                     st.error(f"Failed to evaluate answers: {exc}")
