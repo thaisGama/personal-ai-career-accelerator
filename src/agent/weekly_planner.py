@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib import error as url_error
+from urllib import request as url_request
 
 from openai import OpenAI
 
@@ -387,7 +390,105 @@ def call_llm(
     temperature: float = 0.5,
     max_tokens: int | None = None,
 ) -> str:
-    """Call OpenAI's chat completions API and return the assistant markdown string."""
+    """Call the configured LLM provider and return the assistant markdown string."""
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    if provider == "mock":
+        if "<<EVAL>>" in system_prompt:
+            return (
+                "<<EVAL>>\n"
+                "- Score: 6/10\n"
+                "- Mastery: DEVELOPING\n"
+                "- Strong areas: Core concepts\n"
+                "- Weak areas: Details and edge cases\n"
+                "- Next practice (10–15 min): Rework the two weakest answers using the key.\n"
+                "- Move-on decision: REPEAT\n"
+                "<<END_EVAL>>"
+            )
+        return (
+            "MEMORY_AUDIT (must be echoed exactly at the very top of the output):\n"
+            "Memory used: False\n"
+            "Memory source: mock\n"
+            "Memory characters injected: 0\n"
+            "Memory focus: None\n"
+            "\n"
+            "<<PLAN_MARKDOWN>>\n"
+            "Week 1 Learning Plan\n"
+            "📌 Summary of Goals\n"
+            "- Mock weekly plan for offline testing\n"
+            "- Focus on consistency and progress\n"
+            "\n"
+            "🗓️ Daily Breakdown\n"
+            "Day 1: Mock theme A\n"
+            "Day 2: Mock theme B\n"
+            "Day 3: Mock theme C\n"
+            "Day 4: Mock theme D\n"
+            "Day 5: Mock theme E\n"
+            "\n"
+            "🧩 Micro Tasks (10–30 min)\n"
+            "1) Mock task (15 min) ⭐\n"
+            "Learning capsule: Short mock explanation.\n"
+            "Key takeaways:\n"
+            "- Takeaway one\n"
+            "- Takeaway two\n"
+            "- Takeaway three\n"
+            "\n"
+            "Suggested resource: None\n"
+            "\n"
+            "<<END_PLAN>>\n"
+            "<<MEMORY_SNIPPET>>\n"
+            "- Mock memory snippet line one.\n"
+            "- Mock memory snippet line two.\n"
+            "<<END_MEMORY>>"
+        )
+
+    if provider == "ollama":
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        ollama_model = os.getenv("OLLAMA_MODEL", model)
+        payload = {
+            "model": ollama_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens or MAX_TOKENS,
+            },
+        }
+        url = f"{base_url}/api/chat"
+        req = url_request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with url_request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except url_error.HTTPError as exc:  # pragma: no cover - network/API path
+            detail = exc.read().decode("utf-8") if exc.fp else str(exc)
+            raise RuntimeError(f"Ollama chat request failed ({exc.code}): {detail}") from exc
+        except url_error.URLError as exc:  # pragma: no cover - network/API path
+            raise RuntimeError(
+                f"Ollama server unreachable at {base_url}. Is it running? ({exc.reason})"
+            ) from exc
+        except Exception as exc:  # pragma: no cover - network/API path
+            raise RuntimeError(f"Failed to call Ollama chat: {exc}") from exc
+
+        if not data:
+            raise RuntimeError("Ollama chat returned an empty response.")
+        if isinstance(data, dict) and data.get("error"):
+            raise RuntimeError(f"Ollama chat error: {data['error']}")
+
+        message = data.get("message", {}).get("content") if isinstance(data, dict) else None
+        if not message:
+            raise RuntimeError("Ollama chat returned empty content.")
+        return message
+
+    if provider != "openai":
+        raise RuntimeError(f"Unsupported LLM_PROVIDER '{provider}'. Use openai, ollama, or mock.")
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
