@@ -157,6 +157,32 @@ Planned future features:
 Week 1 in progress.  
 Planner Agent v0.1 under development.
 
+## 🔌 LLM + Embeddings Providers (OpenAI or Ollama)
+By default, the app uses OpenAI (no behavior change). You can switch to local Ollama for no API cost.
+
+### Ollama setup (local)
+1) Install Ollama and start the service.
+2) Pull models (example):
+   - `ollama pull llama3.1:8b`
+   - `ollama pull nomic-embed-text`
+
+### Provider environment variables
+- `LLM_PROVIDER=openai|ollama|mock` (default: `openai`)
+- `EMBEDDINGS_PROVIDER=openai|ollama|none` (default: `openai`)
+- `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
+- `OLLAMA_MODEL` (recommended: `llama3.1:8b`; if unset, the code uses the model argument)
+- `OLLAMA_EMBED_MODEL` (default: `nomic-embed-text`)
+
+### Examples
+- OpenAI (default):
+  - `OPENAI_API_KEY=... streamlit run app.py`
+- Ollama (local):
+  - `LLM_PROVIDER=ollama EMBEDDINGS_PROVIDER=ollama OLLAMA_MODEL=llama3.1:8b streamlit run app.py`
+- Mock (no-spend / offline testing):
+  - `LLM_PROVIDER=mock EMBEDDINGS_PROVIDER=none streamlit run app.py`
+
+Note: your Python venv does not affect Ollama; it runs as a system service.
+
 ## 📚 Learning Units (v3)
 - New LLM markers: `<<LEARNING_UNIT>> ... <<END_LEARNING_UNIT>>` in addition to `<<PLAN_MARKDOWN>>` and `<<MEMORY_SNIPPET>>`.
 - Saved files: `docs/learning_units/{timestamp}_{slug}.md` (timestamp matches weekly plan output).
