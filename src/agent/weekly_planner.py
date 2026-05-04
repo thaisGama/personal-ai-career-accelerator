@@ -712,14 +712,13 @@ def read_recent_memory(
 
 def split_markdown_into_plan_and_linkedin(full_markdown: str) -> Tuple[str, str]:
     """Split the full markdown into the complete plan and the LinkedIn post section."""
-    new_heading = "## 🔗 LinkedIn Post Template"
-    old_heading = "## 5. LinkedIn Post Draft"
+    linkedin_heading = re.search(
+        r"(?im)^[ \t]*(?:#{1,6}[ \t]*)?(?:\d+\.[ \t]*)?(?:[^\w\s#]+[ \t]*)?LinkedIn Post (?:Template|Draft)[ \t]*$",
+        full_markdown,
+    )
 
-    index = full_markdown.find(new_heading)
-    if index == -1:
-        index = full_markdown.find(old_heading)
-
-    if index != -1:
+    if linkedin_heading:
+        index = linkedin_heading.start()
         return full_markdown[:index].rstrip(), full_markdown[index:].lstrip()
 
     fallback = "LinkedIn post section not found in plan."

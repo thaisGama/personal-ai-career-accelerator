@@ -19,6 +19,7 @@ from src.agent.weekly_planner import (
     extract_learning_unit,
     format_weekly_plan,
     save_weekly_plan,
+    split_markdown_into_plan_and_linkedin,
 )
 from src.agent.weekly_planner import build_weekly_planner_prompt
 
@@ -140,6 +141,34 @@ LinkedIn
     assert "# Week 1 Learning Plan" in plan
     assert "# Learning Unit: Embeddings" in learning_unit
     assert "- bullet 1" in memory
+
+
+def test_split_markdown_extracts_chat_bubble_linkedin_template_heading():
+    raw = """# Week 1 Learning Plan
+Plan content
+
+💬 LinkedIn Post Template
+LinkedIn draft content
+"""
+
+    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(raw)
+
+    assert plan_markdown == "# Week 1 Learning Plan\nPlan content"
+    assert linkedin_markdown.rstrip() == "💬 LinkedIn Post Template\nLinkedIn draft content"
+
+
+def test_split_markdown_extracts_plain_linkedin_draft_heading():
+    raw = """# Week 1 Learning Plan
+Plan content
+
+LinkedIn Post Draft
+LinkedIn draft content
+"""
+
+    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(raw)
+
+    assert plan_markdown == "# Week 1 Learning Plan\nPlan content"
+    assert linkedin_markdown.rstrip() == "LinkedIn Post Draft\nLinkedIn draft content"
 
 
 def test_week_heading_enforcement():
