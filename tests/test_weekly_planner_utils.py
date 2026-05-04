@@ -52,10 +52,16 @@ def test_remove_duplicate_daily_breakdown_sections_keeps_one_heading():
 
 🗓️ Daily Breakdown
 - Day 1: Foundations
-
-🗓️ Daily Breakdown
 - Day 2: Practice
 - Day 3: Review
+
+🗓️ Daily Breakdown
+- Day 1: Foundations
+- Day 2: Practice
+- Day 3: Review
+Day 1: Foundations
+Day 2: Practice
+Day 3: Review
 
 🧩 Micro Tasks
 - Task 1
@@ -64,9 +70,9 @@ def test_remove_duplicate_daily_breakdown_sections_keeps_one_heading():
     cleaned = remove_duplicate_daily_breakdown_sections(raw)
 
     assert cleaned.count("Daily Breakdown") == 1
-    assert "- Day 1: Foundations" in cleaned
-    assert "- Day 2: Practice" in cleaned
-    assert "- Day 3: Review" in cleaned
+    assert cleaned.count("Day 1: Foundations") == 1
+    assert cleaned.count("Day 2: Practice") == 1
+    assert cleaned.count("Day 3: Review") == 1
     assert "🧩 Micro Tasks" in cleaned
 
 
@@ -193,6 +199,25 @@ LinkedIn draft content
 
     assert plan_markdown == "# Week 1 Learning Plan\nPlan content"
     assert linkedin_markdown.rstrip() == "LinkedIn Post Draft\nLinkedIn draft content"
+
+
+def test_split_markdown_excludes_files_to_generate_from_linkedin_section():
+    raw = """# Week 1 Learning Plan
+Plan content
+
+💬 LinkedIn Post Template
+LinkedIn draft content
+
+📂 Files to Generate
+- /weekly_plans/week_1_plan.md
+- /posts/linkedin_week_1.md
+"""
+
+    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(raw)
+
+    assert plan_markdown == "# Week 1 Learning Plan\nPlan content"
+    assert linkedin_markdown == "💬 LinkedIn Post Template\nLinkedIn draft content"
+    assert "Files to Generate" not in linkedin_markdown
 
 
 def test_week_heading_enforcement():

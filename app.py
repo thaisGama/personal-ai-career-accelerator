@@ -289,22 +289,18 @@ with planner_tab:
 
     with col_left:
         st.markdown("### Plan preview")
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         plan_md = st.session_state.get("planner_plan_md")
         if plan_md:
             st.markdown(plan_md)
         else:
             st.info("Click **Generate plan** to create this week’s plan.")
-        st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("### LinkedIn draft preview")
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         linkedin_md = st.session_state.get("planner_linkedin_md")
         if linkedin_md:
             st.markdown(linkedin_md)
         else:
             st.caption("No LinkedIn draft detected (or split failed).")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col_right:
         st.markdown("### Outputs")
@@ -745,9 +741,7 @@ with quiz_tab:
         answers_payload = st.session_state.get("quiz_answers_fallback", "")
 
     st.markdown("### Submit answers")
-    st.markdown('<div class="card">', unsafe_allow_html=True)
     evaluate_btn = st.button("Submit answers for evaluation", type="primary", disabled=offline_mode)
-    st.markdown("</div>", unsafe_allow_html=True)
 
     if evaluate_btn:
         if not (quiz_md or "").strip():
