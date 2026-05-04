@@ -18,6 +18,7 @@ from src.agent.weekly_planner import (
     extract_between,
     extract_learning_unit,
     format_weekly_plan,
+    remove_duplicate_daily_breakdown_sections,
     save_weekly_plan,
     split_markdown_into_plan_and_linkedin,
 )
@@ -44,6 +45,29 @@ def test_format_weekly_plan_inserts_heading_when_missing():
     formatted = format_weekly_plan(raw)
     assert formatted.startswith("# Week")
     assert "Content without heading" in formatted
+
+
+def test_remove_duplicate_daily_breakdown_sections_keeps_one_heading():
+    raw = """# Week 1 Learning Plan
+
+🗓️ Daily Breakdown
+- Day 1: Foundations
+
+🗓️ Daily Breakdown
+- Day 2: Practice
+- Day 3: Review
+
+🧩 Micro Tasks
+- Task 1
+"""
+
+    cleaned = remove_duplicate_daily_breakdown_sections(raw)
+
+    assert cleaned.count("Daily Breakdown") == 1
+    assert "- Day 1: Foundations" in cleaned
+    assert "- Day 2: Practice" in cleaned
+    assert "- Day 3: Review" in cleaned
+    assert "🧩 Micro Tasks" in cleaned
 
 
 def test_save_weekly_plan_creates_file_and_dir(tmp_path: Path):

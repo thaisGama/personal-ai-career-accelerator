@@ -486,6 +486,26 @@ def format_weekly_plan(raw_text: str) -> str:
     return content
 
 
+def remove_duplicate_daily_breakdown_sections(markdown: str) -> str:
+    """Keep one Daily Breakdown heading while preserving later section content."""
+    daily_heading = re.compile(
+        r"^[ \t]*(?:#{1,6}[ \t]*)?(?:[^\w\s#]+[ \t]*)?Daily Breakdown[ \t]*$",
+        flags=re.IGNORECASE,
+    )
+    lines = markdown.splitlines()
+    cleaned_lines: list[str] = []
+    seen_daily_breakdown = False
+
+    for line in lines:
+        if daily_heading.match(line):
+            if seen_daily_breakdown:
+                continue
+            seen_daily_breakdown = True
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines)
+
+
 def enforce_week_heading(markdown: str, week_number: int) -> str:
     heading = f"# Week {week_number} Learning Plan"
     lines = markdown.splitlines()
@@ -842,6 +862,7 @@ def generate_weekly_plan_and_learning_unit(
     if memory_audit_block:
         formatted_markdown = f"{memory_audit_block}\n\n{formatted_markdown}"
     plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
+    plan_markdown = remove_duplicate_daily_breakdown_sections(plan_markdown)
 
     roadmap_tags = _extract_roadmap_tags(plan_markdown)
     plan_context = _truncate_text(plan_markdown, max_chars=1400)
