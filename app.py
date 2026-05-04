@@ -91,7 +91,7 @@ st.markdown(
 )
 
 with st.sidebar:
-    st.header("Weekly Planner inputs")
+    st.header("Generate Plan inputs")
     offline_mode = st.toggle(
         "Offline / browse mode",
         value=st.session_state.get("offline_mode", False),
@@ -234,7 +234,7 @@ with st.sidebar:
             st.info("Skipped:\n" + "\n".join(skipped))
 
 planner_tab, plans_tab, roadmaps_tab, quiz_tab, library_tab = st.tabs(
-    ["Weekly Planner", "Weekly Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"]
+    ["Generate Plan", "View Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"]
 )
 # Manual test: open Weekly Plans/Roadmaps tabs, load items into Planner, verify no generation unless Generate clicked.
 
@@ -283,7 +283,7 @@ if generate:
     st.session_state["planner_linkedin_md"] = linkedin_md
 
 with planner_tab:
-    st.markdown("## Weekly Planner")
+    st.markdown("## Generate Plan")
 
     col_left, col_right = st.columns([2.5, 1], gap="large")
 
@@ -446,7 +446,7 @@ with planner_tab:
         st.markdown("</div>", unsafe_allow_html=True)
 
 with plans_tab:
-    st.markdown("## Weekly Plans Library")
+    st.markdown("## Saved Plans")
     plans_dir = BASE_DIR / "weekly_plans"
     plans = _list_files_sorted(plans_dir, "*.md")
     if not plans_dir.exists():
