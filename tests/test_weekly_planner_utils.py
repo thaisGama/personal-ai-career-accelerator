@@ -73,6 +73,8 @@ Day 3: Review
     assert cleaned.count("Day 1: Foundations") == 1
     assert cleaned.count("Day 2: Practice") == 1
     assert cleaned.count("Day 3: Review") == 1
+    assert "- Day 1: Foundations" in cleaned
+    assert "\nDay 1: Foundations" not in cleaned
     assert "🧩 Micro Tasks" in cleaned
 
 

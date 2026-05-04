@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +67,14 @@ def _list_files_sorted(directory: Path, pattern: str) -> list[Path]:
 
 def _format_mtime(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _plan_markdown_for_display(markdown: str) -> str:
+    """Hide diagnostic preamble in the UI while preserving stored files."""
+    week_heading = re.search(r"(?im)^# Week\s+\d+\s+Learning Plan\b.*$", markdown)
+    if week_heading:
+        return markdown[week_heading.start():].lstrip()
+    return markdown
 
 
 st.set_page_config(page_title="AI Career Accelerator", layout="wide")
@@ -291,7 +300,7 @@ with planner_tab:
         st.markdown("### Plan preview")
         plan_md = st.session_state.get("planner_plan_md")
         if plan_md:
-            st.markdown(plan_md)
+            st.markdown(_plan_markdown_for_display(plan_md))
         else:
             st.info("Click **Generate plan** to create this week’s plan.")
 
@@ -466,7 +475,7 @@ with plans_tab:
         st.session_state["weekly_plans_selected_path"] = plan_path.as_posix()
         plan_md = plan_path.read_text(encoding="utf-8")
         st.caption(f"{plan_path.as_posix()} | modified {_format_mtime(plan_path)}")
-        st.markdown(plan_md)
+        st.markdown(_plan_markdown_for_display(plan_md))
         if st.button("Load into Planner Preview", key="load_plan_into_preview"):
             st.session_state["planner_plan_md"] = plan_md
             st.session_state["planner_plan_path"] = plan_path.as_posix()
