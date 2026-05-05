@@ -219,3 +219,6 @@ posts/
 data/*
 tests/fixtures/sample_quiz_results.json
 roadmaps/*
+
+.codex
+docs/brainstorm_assessment.md

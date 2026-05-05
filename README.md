@@ -1,177 +1,179 @@
+# AI Career Learning Assistant
 
-# Personal AI Career Accelerator
-### *Your AI-powered system for learning, building, and advancing in 30-minute sessions — built for busy professionals.*
-
----
-
-## 🌍 Why This Exists
-Most ambitious professionals — especially working parents — simply **don’t have the time or energy** to stay updated in AI/ML.
-
-Yet the world moves fast.  
-To avoid falling behind, you need:
-
-- fast, structured learning  
-- visible progress  
-- real portfolio projects  
-- consistency  
-- motivation  
-- tools that reduce cognitive load  
-
-This project builds exactly that:  
-a personal **AI Career Accelerator** powered by an **AI Weekly Planner Agent**.
+### *An AI system that generates structured learning plans, tasks, and feedback loops for busy professionals.*
 
 ---
 
-## 🧠 How It Works
+## 🚀 Problem
 
-A modern AI-powered learning system consists of:
+Learning AI while working full-time is unstructured, overwhelming, and hard to sustain.
+Most resources are scattered, and there is little guidance on:
 
-### ✔ LLM → *thinks*  
-Understands your goals and generates plans.
-
-### ✔ Embeddings + Vector Search → *remembers*  
-Stores your knowledge and progress.
-
-### ✔ Agent Logic → *plans & decides*  
-Creates micro-tasks, picks projects, and adapts weekly.
-
-### ✔ Tools → *acts*  
-Writes files, organizes your tasks, generates posts.
-
-Your Weekly Planner Agent follows this architecture.
+* what to learn next
+* how to stay consistent
+* how to turn learning into real portfolio work
 
 ---
 
-## 🚀 What This Project Does
-At its core, this repo contains an AI agent that:
+## 💡 Solution
 
-### 🎯 Generates a Weekly Learning Plan  
-Personalized based on your goals and available time.
+This project is an **AI-powered learning assistant** that:
 
-### 🧩 Breaks it into Micro-Tasks  
-Perfect for 10–20–30 minute sessions.
+* generates structured weekly learning plans
+* breaks them into actionable micro-tasks
+* adapts over time using memory and feedback
+* helps maintain progress without heavy manual planning
 
-### 🛠 Suggests a Mini-Project  
-So you build portfolio pieces every week.
-
-### 📝 Creates a LinkedIn Post Template  
-Keeping your public visibility consistent.
-
-### 💾 Automatic Markdown Output  
-All files are saved into well-structured folders.
+It acts as a lightweight **AI coach for continuous skill development**.
 
 ---
 
-## 👥 Who This Is For
-- Busy professionals  
-- Working moms & dads  
-- Full-time employees  
-- Career changers  
-- Anyone overwhelmed by too much content  
-- Learners who want **small wins** instead of burnout  
-- People aiming for a better job or to build a monetizable AI product  
+## 🧠 System Overview
+
+This is a **multi-component AI system**, not just a prompt.
+
+### Core components:
+
+* **LLM (Planner)** → generates weekly plans and learning content
+* **Embeddings + Vector Search (Memory)** → retrieves relevant past learning context
+* **Agent Loop (ReAct-style)** → orchestrates multi-step reasoning and tool usage
+* **Task System** → tracks progress and updates learning state
+* **Quiz System** → evaluates understanding and identifies weak areas
+* **Trace Logging** → records agent steps for transparency and debugging
+* **Streamlit UI** → user interface to run and inspect the system
 
 ---
 
-# 📅 4-Week Roadmap (Phase 1)
+## ⚙️ What the System Does
 
-## 📆 Week 1 — Modern AI Foundations + Agent MVP
-- Learn LLMs, embeddings, agent workflows  
-- Build the initial Weekly Planner Agent  
-- Generate first weekly plan + LinkedIn post  
-- Push first commits to GitHub  
+* 📅 Generates a personalized weekly learning plan
+* 🧩 Breaks it into 10–30 min micro-tasks
+* 🛠 Suggests a weekly mini-project
+* 📝 Generates a LinkedIn post draft
+* 🧪 Creates quizzes and evaluates answers
+* 💾 Stores and retrieves memory using embeddings
+* 📊 Logs execution traces of the agent
 
----
-
-## 📆 Week 2 — Applied AI Feature (Core Module)
-Build one applied module (your future product core):
-
-- Course → Micro-Lesson Summarizer  
-- Journaling → Insight Generator  
-- Learning → Portfolio Artifact Creator  
+All outputs are saved as structured Markdown files.
 
 ---
 
-## 📆 Week 3 — Real AI App (UI + Vector Search + Agents)
-Assemble your modules into a Streamlit app:
+## 🧪 Example Flow
 
-- Upload notes/course text  
-- Generate summaries  
-- Produce weekly plans  
-- Memory via embeddings  
-- Optional audio summaries  
-
----
-
-## 📆 Week 4 — Monetization + Career Positioning
-- Build landing page  
-- Polish UI  
-- Deploy app  
-- Publish updates  
-- Design “Pro Version”  
-- Prepare job search materials  
+1. User defines a goal (e.g. “Learn RAG systems”)
+2. Agent retrieves relevant past memory
+3. Agent generates a weekly plan + tasks
+4. Tasks are stored and tracked
+5. User completes tasks and runs quiz
+6. Results update learning state
+7. Next plan adapts based on progress
 
 ---
 
-# 📂 Repo Structure
+## 📂 Repo Structure
+
 ```
-agent/               # Weekly Planner Agent code  
-weekly_plans/        # Generated learning plans  
-tasks/               # 30-minute tasks  
-posts/               # LinkedIn post drafts  
-docs/                # Memory, learning notes, summaries  
-docs/learning_units/ # Study-ready learning unit markdown  
+agent/               # Agent logic (planner, tools, loop)
+weekly_plans/        # Generated plans
+tasks/               # Task tracking
+posts/               # LinkedIn drafts
+docs/                # Memory + notes
+docs/learning_units/ # Generated learning units
+data/                # memory vectors, traces, tasks
 ```
 
 ---
 
-# 🛠 Tech Stack
-- Python  
-- OpenAI / LLMs  
-- Basic agent patterns  
-- (Future) embeddings + vector search  
-- (Future) Streamlit UI  
+## 🛠 Tech Stack
+
+* Python
+* OpenAI / Ollama (LLMs)
+* Embeddings + vector search (local)
+* ReAct-style agent orchestration
+* Streamlit UI
 
 ---
 
-# 🌟 Long-Term Vision
-This project will grow into a SaaS platform for:
+## ✔ What This Demonstrates
 
-- busy professionals  
-- working parents  
-- ambitious learners  
-- people transitioning to AI careers  
-
-Planned future features:
-
-- audio lessons  
-- smart task prioritization  
-- portfolio generator  
-- interview prep  
-- dashboards with insights  
-- personalized AI learning paths  
+* Building an **end-to-end AI system**, not just models
+* Working with **LLMs beyond prompting** (planning, memory, orchestration)
+* Implementing **retrieval-based memory (RAG-like pattern)**
+* Designing **agent workflows with tools and state**
+* Creating **feedback loops (quiz → learning adaptation)**
+* Structuring a system for **explainability via traces**
 
 ---
 
-# ✔ Status
-Week 1 in progress.  
-Planner Agent v0.1 under development.
+## ⚡ Status
 
-## 📚 Learning Units (v3)
-- New LLM markers: `<<LEARNING_UNIT>> ... <<END_LEARNING_UNIT>>` in addition to `<<PLAN_MARKDOWN>>` and `<<MEMORY_SNIPPET>>`.
-- Saved files: `docs/learning_units/{timestamp}_{slug}.md` (timestamp matches weekly plan output).
-- Streamlit: use the **Learning Library** tab to browse and render saved learning units with section expanders.
-- Streamlit: the Weekly Planner output includes a **Debug roadmap progress** expander for milestone counts and week-number rationale.
-- Streamlit: use **Reset progress** in the sidebar to wipe tasks/quiz/memory with explicit confirmation and scope selection.
-- Resources: constrained to identifiable free sources (title + owner + platform + search phrase; no raw URLs).
-- Token controls: `PLANNER_MAX_TOKENS` (default 4500), `PLANNER_PLAN_MAX_TOKENS` (default 2200), `PLANNER_UNIT_MAX_TOKENS` (default 2800).
-- Quick test: rename `docs/learning_units` to `docs/learning_units_backup`, run `streamlit run app.py`, generate a plan, and confirm a new learning unit file and updated modified time in the UI.
+Prototype complete and working locally.
+
+* End-to-end flow implemented
+* Memory + agent loop integrated
+* UI available via Streamlit
+* Offline/mock mode supported for testing
 
 ---
 
-## 🧭 Learning Check (Quiz) v0.1
-- Run `streamlit run app.py` (with `OPENAI_API_KEY` set), open the **Learning Check** section, enter a topic and optional notes, then click **Generate quiz**.
-- Paste your answers in the UI and click **Evaluate answers** to get a mastery score and move-on recommendation. Results are saved under `docs/quizzes/`.
-- Click **Append to memory.md** to drop the evaluation into `docs/memory.md` for future context.
-- The quiz UI now shows only questions by default; rubric is in an expander and answers stay locked until you evaluate (or manually unlock).
-- CLI smoke test: `python scripts/run_learning_check.py` (requires `OPENAI_API_KEY`).
+## ▶️ Run Locally
+
+```bash
+streamlit run app.py
+```
+
+### Providers
+
+* OpenAI (default)
+* Ollama (local)
+* Mock mode (offline testing)
+
+---
+
+## 🔌 Configuration (optional)
+
+```
+LLM_PROVIDER=openai|ollama|mock
+EMBEDDINGS_PROVIDER=openai|ollama|none
+OPENAI_API_KEY=...
+OLLAMA_MODEL=llama3.1:8b
+```
+
+---
+
+## 📚 Learning Units & Quiz
+
+* Learning units are generated and stored in `docs/learning_units/`
+* Quiz system evaluates answers and updates learning state
+* Memory is continuously updated for future planning
+
+---
+
+## ⚠️ Scope
+
+This is a **local prototype**, not a production system.
+
+Focus:
+
+* system design
+* agent workflows
+* learning loop
+
+Not included:
+
+* authentication
+* cloud deployment
+* large-scale evaluation
+
+---
+
+## 🎯 Goal of This Project
+
+To explore and demonstrate how to build **practical AI systems** that combine:
+
+* planning
+* memory
+* interaction
+* feedback
+
+in a coherent workflow.

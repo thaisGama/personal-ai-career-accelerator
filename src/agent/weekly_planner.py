@@ -486,6 +486,34 @@ def format_weekly_plan(raw_text: str) -> str:
     return content
 
 
+def remove_duplicate_daily_breakdown_sections(markdown: str) -> str:
+    """Keep one Daily Breakdown heading while preserving later section content."""
+    daily_heading = re.compile(
+        r"^[ \t]*(?:#{1,6}[ \t]*)?(?:[^\w\s#]+[ \t]*)?Daily Breakdown[ \t]*$",
+        flags=re.IGNORECASE,
+    )
+    day_line = re.compile(r"^[ \t]*(?:[-*][ \t]*)?(Day\s+\d+:[ \t]*.+)$", flags=re.IGNORECASE)
+    lines = markdown.splitlines()
+    cleaned_lines: list[str] = []
+    seen_daily_breakdown = False
+    seen_day_lines: set[str] = set()
+
+    for line in lines:
+        if daily_heading.match(line):
+            if seen_daily_breakdown:
+                continue
+            seen_daily_breakdown = True
+        day_match = day_line.match(line)
+        if day_match:
+            normalized_day_line = re.sub(r"\s+", " ", day_match.group(1).strip()).lower()
+            if normalized_day_line in seen_day_lines:
+                continue
+            seen_day_lines.add(normalized_day_line)
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines)
+
+
 def enforce_week_heading(markdown: str, week_number: int) -> str:
     heading = f"# Week {week_number} Learning Plan"
     lines = markdown.splitlines()
@@ -712,15 +740,21 @@ def read_recent_memory(
 
 def split_markdown_into_plan_and_linkedin(full_markdown: str) -> Tuple[str, str]:
     """Split the full markdown into the complete plan and the LinkedIn post section."""
-    new_heading = "## 🔗 LinkedIn Post Template"
-    old_heading = "## 5. LinkedIn Post Draft"
+    linkedin_heading = re.search(
+        r"(?im)^[ \t]*(?:#{1,6}[ \t]*)?(?:\d+\.[ \t]*)?(?:[^\w\s#]+[ \t]*)?LinkedIn Post (?:Template|Draft)[ \t]*$",
+        full_markdown,
+    )
 
-    index = full_markdown.find(new_heading)
-    if index == -1:
-        index = full_markdown.find(old_heading)
-
-    if index != -1:
-        return full_markdown[:index].rstrip(), full_markdown[index:].lstrip()
+    if linkedin_heading:
+        index = linkedin_heading.start()
+        linkedin_section = full_markdown[index:]
+        files_heading = re.search(
+            r"(?im)^[ \t]*(?:#{1,6}[ \t]*)?(?:[^\w\s#]+[ \t]*)?Files to Generate[ \t]*$",
+            linkedin_section,
+        )
+        if files_heading:
+            linkedin_section = linkedin_section[:files_heading.start()]
+        return full_markdown[:index].rstrip(), linkedin_section.strip()
 
     fallback = "LinkedIn post section not found in plan."
     return full_markdown, fallback
@@ -843,6 +877,7 @@ def generate_weekly_plan_and_learning_unit(
     if memory_audit_block:
         formatted_markdown = f"{memory_audit_block}\n\n{formatted_markdown}"
     plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
+    plan_markdown = remove_duplicate_daily_breakdown_sections(plan_markdown)
 
     roadmap_tags = _extract_roadmap_tags(plan_markdown)
     plan_context = _truncate_text(plan_markdown, max_chars=1400)

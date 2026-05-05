@@ -18,7 +18,9 @@ from src.agent.weekly_planner import (
     extract_between,
     extract_learning_unit,
     format_weekly_plan,
+    remove_duplicate_daily_breakdown_sections,
     save_weekly_plan,
+    split_markdown_into_plan_and_linkedin,
 )
 from src.agent.weekly_planner import build_weekly_planner_prompt
 
@@ -43,6 +45,37 @@ def test_format_weekly_plan_inserts_heading_when_missing():
     formatted = format_weekly_plan(raw)
     assert formatted.startswith("# Week")
     assert "Content without heading" in formatted
+
+
+def test_remove_duplicate_daily_breakdown_sections_keeps_one_heading():
+    raw = """# Week 1 Learning Plan
+
+🗓️ Daily Breakdown
+- Day 1: Foundations
+- Day 2: Practice
+- Day 3: Review
+
+🗓️ Daily Breakdown
+- Day 1: Foundations
+- Day 2: Practice
+- Day 3: Review
+Day 1: Foundations
+Day 2: Practice
+Day 3: Review
+
+🧩 Micro Tasks
+- Task 1
+"""
+
+    cleaned = remove_duplicate_daily_breakdown_sections(raw)
+
+    assert cleaned.count("Daily Breakdown") == 1
+    assert cleaned.count("Day 1: Foundations") == 1
+    assert cleaned.count("Day 2: Practice") == 1
+    assert cleaned.count("Day 3: Review") == 1
+    assert "- Day 1: Foundations" in cleaned
+    assert "\nDay 1: Foundations" not in cleaned
+    assert "🧩 Micro Tasks" in cleaned
 
 
 def test_save_weekly_plan_creates_file_and_dir(tmp_path: Path):
@@ -140,6 +173,53 @@ LinkedIn
     assert "# Week 1 Learning Plan" in plan
     assert "# Learning Unit: Embeddings" in learning_unit
     assert "- bullet 1" in memory
+
+
+def test_split_markdown_extracts_chat_bubble_linkedin_template_heading():
+    raw = """# Week 1 Learning Plan
+Plan content
+
+💬 LinkedIn Post Template
+LinkedIn draft content
+"""
+
+    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(raw)
+
+    assert plan_markdown == "# Week 1 Learning Plan\nPlan content"
+    assert linkedin_markdown.rstrip() == "💬 LinkedIn Post Template\nLinkedIn draft content"
+
+
+def test_split_markdown_extracts_plain_linkedin_draft_heading():
+    raw = """# Week 1 Learning Plan
+Plan content
+
+LinkedIn Post Draft
+LinkedIn draft content
+"""
+
+    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(raw)
+
+    assert plan_markdown == "# Week 1 Learning Plan\nPlan content"
+    assert linkedin_markdown.rstrip() == "LinkedIn Post Draft\nLinkedIn draft content"
+
+
+def test_split_markdown_excludes_files_to_generate_from_linkedin_section():
+    raw = """# Week 1 Learning Plan
+Plan content
+
+💬 LinkedIn Post Template
+LinkedIn draft content
+
+📂 Files to Generate
+- /weekly_plans/week_1_plan.md
+- /posts/linkedin_week_1.md
+"""
+
+    plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(raw)
+
+    assert plan_markdown == "# Week 1 Learning Plan\nPlan content"
+    assert linkedin_markdown == "💬 LinkedIn Post Template\nLinkedIn draft content"
+    assert "Files to Generate" not in linkedin_markdown
 
 
 def test_week_heading_enforcement():

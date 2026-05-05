@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -68,6 +69,14 @@ def _format_mtime(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _plan_markdown_for_display(markdown: str) -> str:
+    """Hide diagnostic preamble in the UI while preserving stored files."""
+    week_heading = re.search(r"(?im)^# Week\s+\d+\s+Learning Plan\b.*$", markdown)
+    if week_heading:
+        return markdown[week_heading.start():].lstrip()
+    return markdown
+
+
 st.set_page_config(page_title="AI Career Accelerator", layout="wide")
 
 st.title("Personal AI Career Accelerator 🧠⚡")
@@ -91,7 +100,7 @@ st.markdown(
 )
 
 with st.sidebar:
-    st.header("Weekly Planner inputs")
+    st.header("Generate Plan inputs")
     offline_mode = st.toggle(
         "Offline / browse mode",
         value=st.session_state.get("offline_mode", False),
@@ -234,7 +243,7 @@ with st.sidebar:
             st.info("Skipped:\n" + "\n".join(skipped))
 
 planner_tab, plans_tab, roadmaps_tab, quiz_tab, library_tab = st.tabs(
-    ["Weekly Planner", "Weekly Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"]
+    ["Generate Plan", "View Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"]
 )
 # Manual test: open Weekly Plans/Roadmaps tabs, load items into Planner, verify no generation unless Generate clicked.
 
@@ -283,28 +292,24 @@ if generate:
     st.session_state["planner_linkedin_md"] = linkedin_md
 
 with planner_tab:
-    st.markdown("## Weekly Planner")
+    st.markdown("## Generate Plan")
 
     col_left, col_right = st.columns([2.5, 1], gap="large")
 
     with col_left:
         st.markdown("### Plan preview")
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         plan_md = st.session_state.get("planner_plan_md")
         if plan_md:
-            st.markdown(plan_md)
+            st.markdown(_plan_markdown_for_display(plan_md))
         else:
             st.info("Click **Generate plan** to create this week’s plan.")
-        st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("### LinkedIn draft preview")
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         linkedin_md = st.session_state.get("planner_linkedin_md")
         if linkedin_md:
             st.markdown(linkedin_md)
         else:
             st.caption("No LinkedIn draft detected (or split failed).")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col_right:
         st.markdown("### Outputs")
@@ -446,7 +451,7 @@ with planner_tab:
         st.markdown("</div>", unsafe_allow_html=True)
 
 with plans_tab:
-    st.markdown("## Weekly Plans Library")
+    st.markdown("## Saved Plans")
     plans_dir = BASE_DIR / "weekly_plans"
     plans = _list_files_sorted(plans_dir, "*.md")
     if not plans_dir.exists():
@@ -470,7 +475,7 @@ with plans_tab:
         st.session_state["weekly_plans_selected_path"] = plan_path.as_posix()
         plan_md = plan_path.read_text(encoding="utf-8")
         st.caption(f"{plan_path.as_posix()} | modified {_format_mtime(plan_path)}")
-        st.markdown(plan_md)
+        st.markdown(_plan_markdown_for_display(plan_md))
         if st.button("Load into Planner Preview", key="load_plan_into_preview"):
             st.session_state["planner_plan_md"] = plan_md
             st.session_state["planner_plan_path"] = plan_path.as_posix()
@@ -745,9 +750,7 @@ with quiz_tab:
         answers_payload = st.session_state.get("quiz_answers_fallback", "")
 
     st.markdown("### Submit answers")
-    st.markdown('<div class="card">', unsafe_allow_html=True)
     evaluate_btn = st.button("Submit answers for evaluation", type="primary", disabled=offline_mode)
-    st.markdown("</div>", unsafe_allow_html=True)
 
     if evaluate_btn:
         if not (quiz_md or "").strip():
