@@ -70,6 +70,18 @@ def update_day_learning_unit_path(
     return progress, week, day
 
 
+def update_day_quiz_path(
+    path: Path,
+    day_id: str,
+    quiz_path: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    progress = load_learning_progress(path)
+    week, day = find_week_and_day(progress, day_id)
+    day["quiz_path"] = quiz_path
+    save_learning_progress(path, progress)
+    return progress, week, day
+
+
 def _next_week_id(progress: Dict[str, Any]) -> str:
     return f"week_{len(progress.get('weeks', [])) + 1:03d}"
 
@@ -196,4 +208,5 @@ __all__ = [
     "resolve_learning_progress_path",
     "save_learning_progress",
     "update_day_learning_unit_path",
+    "update_day_quiz_path",
 ]

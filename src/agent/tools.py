@@ -28,7 +28,9 @@ from .learning_progress_store import (
     load_learning_progress,
     resolve_learning_progress_path,
     update_day_learning_unit_path,
+    update_day_quiz_path,
 )
+from .learning_check import QUIZ_GENERATION_SYSTEM_PROMPT, save_day_quiz_markdown
 from .task_store import (
     TaskProgressSummary,
     load_tasks,
@@ -856,6 +858,18 @@ def _memory_context_for_day(base_dir: Path, day: Dict[str, Any], week: Dict[str,
     return "Relevant memory:\n" + "\n".join(f"- {item.text.strip()}" for _score, item in results)
 
 
+def _read_relative_text(base_dir: Path, relative_path: str) -> str:
+    if not relative_path:
+        return ""
+    path = base_dir / relative_path
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
 def tool_generate_learning_unit_for_day(
     day_id: str,
     base_dir: Path,
@@ -945,6 +959,68 @@ def tool_generate_learning_unit_for_day(
     return {
         "day_id": day_id,
         "learning_unit_path": relative_path,
+        "progress_path": progress_path.as_posix(),
+        "week_id": week.get("week_id", ""),
+        "topic": updated_day.get("topic", ""),
+    }
+
+
+def tool_generate_quiz_for_day(
+    day_id: str,
+    base_dir: Path,
+    model: str = DEFAULT_MODEL,
+) -> Dict[str, Any]:
+    """Generate and persist a quiz for one day in learning_progress.json."""
+    progress_path = resolve_learning_progress_path(base_dir)
+    progress = load_learning_progress(progress_path)
+    week, day = find_week_and_day(progress, day_id)
+
+    learning_unit_text = _read_relative_text(base_dir, str(day.get("learning_unit_path") or ""))
+    topic = str(day.get("topic") or "Learning day")
+    context_text = (
+        f"Day ID: {day.get('day_id')}\n"
+        f"Day number: {day.get('day_number')}\n"
+        f"Day topic: {topic}\n"
+        f"Estimated minutes: {day.get('estimated_minutes') or 0}\n\n"
+        f"Week title: {week.get('title') or ''}\n"
+        f"Week goal: {week.get('goal') or ''}\n"
+        f"Roadmap: {progress.get('roadmap_id') or 'not provided'}\n"
+        f"Phase: {week.get('phase_id') or 'not provided'}\n"
+        f"Milestone: {week.get('milestone_id') or 'not provided'}\n\n"
+        "Learning unit content:\n"
+        f"{learning_unit_text.strip() if learning_unit_text.strip() else 'No learning unit content available.'}"
+    )
+    user_prompt = (
+        f"Topic: {topic}\n"
+        "Generate a quiz for this exact Day. Base questions primarily on the learning unit content "
+        "when it is available.\n\n"
+        f"{context_text}\n\n"
+        "Generate the quiz now."
+    )
+    quiz_markdown = call_llm(
+        system_prompt=QUIZ_GENERATION_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        model=model,
+    ).strip()
+    if not quiz_markdown:
+        quiz_markdown = "<<QUIZ>>\nQuiz generation failed.\n"
+
+    saved_path = save_day_quiz_markdown(
+        day_id=day_id,
+        topic=topic,
+        quiz_markdown=quiz_markdown,
+        base_dir=base_dir,
+    )
+    relative_path = _relative_to_base(saved_path, base_dir)
+    _progress, _week, updated_day = update_day_quiz_path(
+        path=progress_path,
+        day_id=day_id,
+        quiz_path=relative_path,
+    )
+
+    return {
+        "day_id": day_id,
+        "quiz_path": relative_path,
         "progress_path": progress_path.as_posix(),
         "week_id": week.get("week_id", ""),
         "topic": updated_day.get("topic", ""),

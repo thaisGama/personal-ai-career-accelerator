@@ -15,6 +15,7 @@ from src.agent.learning_progress_store import (
     load_learning_progress,
     save_learning_progress,
     update_day_learning_unit_path,
+    update_day_quiz_path,
 )
 
 
@@ -158,3 +159,24 @@ def test_update_day_learning_unit_path_updates_matching_day(tmp_path: Path):
     assert load_learning_progress(progress_path)["weeks"][0]["days"][0]["learning_unit_path"] == (
         "docs/learning_units/day_001_first-topic.md"
     )
+
+
+def test_update_day_quiz_path_updates_matching_day_without_status_change(tmp_path: Path):
+    progress_path = tmp_path / "data" / "learning_progress.json"
+    append_week_from_plan(
+        progress_path,
+        """🧩 Learning Days (10–30 min)
+- 🔥 **Day 1 (20 min): First topic**
+""",
+        roadmap_id="goal_test",
+    )
+
+    _progress, _week, day = update_day_quiz_path(
+        progress_path,
+        day_id="day_001",
+        quiz_path="docs/quizzes/day_001_first-topic.md",
+    )
+
+    assert day["quiz_path"] == "docs/quizzes/day_001_first-topic.md"
+    assert day["status"] == "TODO"
+    assert day["quiz_result"] == ""
