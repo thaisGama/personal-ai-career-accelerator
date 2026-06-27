@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .critic import run_plan_critic
+from .learning_progress_store import append_week_from_plan, resolve_learning_progress_path
 from .memory.vector_store import LocalVectorStore
 from .tools import (
     tool_decide_next_task,
@@ -962,6 +963,18 @@ def run_weekly_planner_agent_react(
             state["linkedin_path"] = output.get("linkedin_path", "")
             state["memory_path"] = output.get("memory_path", "")
             state["learning_unit_path"] = output.get("learning_unit_path", "")
+            learning_progress_path = resolve_learning_progress_path(base_path)
+            _progress, progress_week = append_week_from_plan(
+                path=learning_progress_path,
+                plan_md=state.get("weekly_plan_md", ""),
+                roadmap_id=state.get("roadmap_id") or "",
+                phase_id=state.get("roadmap_current_phase") or "",
+                milestone_id=state.get("roadmap_current_milestone") or "",
+                week_number_global=state.get("roadmap_week_number"),
+                goal=state.get("goal") or goal,
+            )
+            state["learning_progress_path"] = learning_progress_path.as_posix()
+            state["learning_progress_week_id"] = progress_week.get("week_id", "")
         elif tool_name == "decide_next_task":
             output = tool_decide_next_task(
                 weekly_plan_md=state.get("weekly_plan_md", ""),

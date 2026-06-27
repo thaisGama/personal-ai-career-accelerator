@@ -8,7 +8,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.agent.reset_utils import resolve_reset_paths, resolve_tasks_path
+from src.agent.reset_utils import (
+    resolve_learning_progress_path,
+    resolve_reset_paths,
+    resolve_tasks_path,
+)
 
 
 def test_reset_path_resolution_prefers_data_dir(tmp_path: Path):
@@ -35,4 +39,11 @@ def test_reset_paths_handles_missing_files(tmp_path: Path):
     paths = resolve_reset_paths(tmp_path)
 
     assert paths["tasks_path"].name == "tasks.csv"
+    assert paths["learning_progress_path"].name == "learning_progress.json"
     assert paths["memory_path"].name == "memory.md"
+
+
+def test_learning_progress_path_uses_data_dir(tmp_path: Path):
+    path = resolve_learning_progress_path(tmp_path)
+
+    assert path == tmp_path / "data" / "learning_progress.json"

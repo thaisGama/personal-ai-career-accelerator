@@ -14,6 +14,7 @@ from src.agent.tools import (
 )
 from src.agent.reset_utils import resolve_reset_paths, resolve_tasks_path
 from src.agent.task_store import ensure_tasks_file
+from src.agent.learning_progress_store import ensure_learning_progress_file
 import src.agent.weekly_planner as weekly_planner
 from src.core.io.quiz_results_store import append_quiz_results
 from src.core.parsing.quiz_parsing import parse_questions, parse_quiz_sections
@@ -44,7 +45,7 @@ def _safe_delete_path(path: Path, base_dir: Path) -> tuple[bool, str]:
 
 def _collect_reset_targets(scope: str, base_dir: Path) -> list[Path]:
     paths = resolve_reset_paths(base_dir)
-    targets: list[Path] = [paths["tasks_path"]]
+    targets: list[Path] = [paths["tasks_path"], paths["learning_progress_path"]]
     if scope in {"Tasks + quiz history", "Everything"}:
         targets.extend([p for p in paths["quiz_paths"] if p.exists()])
     if scope in {"Tasks + memory", "Everything"}:
@@ -226,6 +227,7 @@ with st.sidebar:
         errors: list[str] = []
         base_dir = BASE_DIR
         tasks_path = resolve_tasks_path(base_dir)
+        learning_progress_path = resolve_reset_paths(base_dir)["learning_progress_path"]
         for target in reset_targets:
             ok, message = _safe_delete_path(target, base_dir)
             if ok:
@@ -236,6 +238,8 @@ with st.sidebar:
                 skipped.append(message)
         ensure_tasks_file(tasks_path)
         deleted.append(tasks_path.as_posix())
+        ensure_learning_progress_file(learning_progress_path)
+        deleted.append(learning_progress_path.as_posix())
         if errors:
             st.error("Reset completed with errors:\n" + "\n".join(errors))
         st.success("Deleted:\n" + "\n".join(deleted))

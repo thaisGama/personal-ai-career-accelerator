@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 
 from openai import OpenAI
 
+from .learning_progress_store import append_week_from_plan, resolve_learning_progress_path
 from .memory.vector_store import LocalVectorStore
 from .task_store import TaskProgressSummary, load_tasks, summarize_task_progress, upsert_tasks_from_plan
 
@@ -827,6 +828,21 @@ def save_learning_unit(
     return path
 
 
+def save_day_learning_unit(
+    markdown: str,
+    base_dir: Path | str,
+    day_id: str,
+    slug_source: str,
+) -> Path:
+    """Save a learning unit for one day under docs/learning_units."""
+    target_dir = Path(base_dir) / "docs" / "learning_units"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    slug = _slugify(slug_source)
+    path = target_dir / f"{day_id}_{slug}.md"
+    path.write_text(markdown.strip(), encoding="utf-8")
+    return path
+
+
 def generate_weekly_plan_and_learning_unit(
     goal: str,
     time_per_week_hours: float,
@@ -1088,6 +1104,16 @@ def generate_and_save_week(
         learning_unit_md=learning_unit_md,
         learning_unit_slug_source=goal,
     )
+    learning_progress_path = resolve_learning_progress_path(Path(base_dir))
+    _progress, progress_week = append_week_from_plan(
+        path=learning_progress_path,
+        plan_md=plan_markdown,
+        roadmap_id=roadmap_meta.get("roadmap_id", "") or "",
+        phase_id=roadmap_meta.get("current_phase", "") or "",
+        milestone_id=roadmap_meta.get("current_milestone", "") or "",
+        week_number_global=roadmap_meta.get("week_number"),
+        goal=goal,
+    )
 
     if memory_snippet:
         memory_path = append_memory_snippet(memory_snippet, path=memory_path)
@@ -1106,6 +1132,8 @@ def generate_and_save_week(
         "raw_markdown": generation.get("raw_plan_output", ""),
         "memory_path": memory_path,
         "learning_unit_path": learning_unit_path,
+        "learning_progress_path": learning_progress_path,
+        "learning_progress_week_id": progress_week.get("week_id", ""),
         "roadmap_path": roadmap_meta.get("roadmap_path", ""),
         "roadmap_total_hours": roadmap_meta.get("total_estimated_hours"),
         "roadmap_estimated_weeks": roadmap_meta.get("estimated_weeks_at_hours_per_week"),
