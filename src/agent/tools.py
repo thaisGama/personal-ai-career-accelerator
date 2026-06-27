@@ -11,12 +11,28 @@ from uuid import uuid4
 
 from .memory.vector_store import LocalVectorStore
 from .weekly_planner import (
+    DEFAULT_MODEL,
+    UNIT_MAX_TOKENS,
     append_memory_snippet,
+    build_learning_unit_prompt,
     call_llm,
+    check_learning_unit_quality,
     extract_between,
+    extract_learning_unit,
     generate_weekly_plan_and_learning_unit,
+    save_day_learning_unit,
     save_week_files,
 )
+from .learning_progress_store import (
+    append_review_day,
+    find_week_and_day,
+    load_learning_progress,
+    resolve_learning_progress_path,
+    update_day_learning_unit_path,
+    update_day_quiz_path,
+    update_day_validation_result,
+)
+from .learning_check import QUIZ_GENERATION_SYSTEM_PROMPT, evaluate_micro_quiz, save_day_quiz_markdown
 from .task_store import (
     TaskProgressSummary,
     load_tasks,
@@ -785,10 +801,10 @@ def tool_upsert_tasks_from_plan(
 
 
 def tool_select_quiz_tasks(
-    tasks_path: Path, n: int = 3, strategy: str = "priority+weakness"
+    tasks_path: Path, n: int = 3, strategy: str = "priority+weakness", roadmap_id: str | None = None
 ) -> Dict[str, Any]:
     _ = strategy
-    tasks = select_quiz_tasks(tasks_path, n=n)
+    tasks = select_quiz_tasks(tasks_path, n=n, roadmap_id=roadmap_id)
     return {"selected_tasks": tasks, "tasks_path": tasks_path.as_posix()}
 
 
@@ -823,3 +839,290 @@ def tool_summarize_task_progress(tasks_path: Path) -> Dict[str, Any]:
 def tool_mark_done(tasks_path: Path, task_ids: List[str]) -> Dict[str, Any]:
     updated = mark_tasks_done(tasks_path, task_ids)
     return {"updated_count": updated, "tasks_path": tasks_path.as_posix()}
+
+
+def _relative_to_base(path: Path, base_dir: Path) -> str:
+    try:
+        return path.relative_to(base_dir).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _memory_context_for_day(base_dir: Path, day: Dict[str, Any], week: Dict[str, Any], top_k: int = 5) -> str:
+    try:
+        store = LocalVectorStore(path=base_dir / "data" / "memory_vectors.json")
+        query = f"{week.get('goal', '')}\n{day.get('topic', '')}".strip()
+        results = store.search(query, top_k=top_k)
+    except Exception:
+        results = []
+    if not results:
+        return ""
+    return "Relevant memory:\n" + "\n".join(f"- {item.text.strip()}" for _score, item in results)
+
+
+def _read_relative_text(base_dir: Path, relative_path: str) -> str:
+    if not relative_path:
+        return ""
+    path = base_dir / relative_path
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
+def tool_generate_learning_unit_for_day(
+    day_id: str,
+    base_dir: Path,
+    model: str = DEFAULT_MODEL,
+    preferences: str | None = None,
+    target_level: str | None = None,
+    background: str | None = None,
+) -> Dict[str, Any]:
+    """Generate and persist a learning unit for one day in learning_progress.json."""
+    progress_path = resolve_learning_progress_path(base_dir)
+    progress = load_learning_progress(progress_path)
+    week, day = find_week_and_day(progress, day_id)
+
+    roadmap_context = (
+        f"Roadmap: {progress.get('roadmap_id') or 'not provided'}\n"
+        f"Phase: {week.get('phase_id') or 'not provided'}\n"
+        f"Milestone: {week.get('milestone_id') or 'not provided'}"
+    )
+    review_context = ""
+    if day.get("is_review"):
+        review_context = (
+            "\nReview context:\n"
+            f"- Review of day: {day.get('review_of_day_id') or 'not provided'}\n"
+            f"- Review reason: {day.get('review_reason') or 'not provided'}\n"
+            f"- Prior quiz result: {day.get('quiz_result') or 'not provided'}\n"
+            f"- Reflection: {day.get('reflection') or 'not provided'}"
+        )
+    plan_context = (
+        f"Generate a learning unit for exactly this day, not the full week.\n"
+        f"Week title: {week.get('title') or ''}\n"
+        f"Week goal: {week.get('goal') or ''}\n"
+        f"Day ID: {day.get('day_id')}\n"
+        f"Day number: {day.get('day_number')}\n"
+        f"Day topic: {day.get('topic')}\n"
+        f"Estimated minutes: {day.get('estimated_minutes') or 0}"
+        f"{review_context}"
+    )
+    unit_system_prompt, unit_user_prompt = build_learning_unit_prompt(
+        goal=str(day.get("topic") or week.get("goal") or "Learning day"),
+        preferences=preferences,
+        memory_context=_memory_context_for_day(base_dir, day, week),
+        roadmap_tags=None,
+        roadmap_context=roadmap_context,
+        plan_context=plan_context,
+        target_level=target_level,
+        background=background,
+    )
+
+    raw_output = call_llm(
+        system_prompt=unit_system_prompt,
+        user_prompt=unit_user_prompt,
+        model=model,
+        max_tokens=UNIT_MAX_TOKENS,
+    )
+    learning_unit_md = extract_learning_unit(raw_output) or raw_output.strip()
+    if not learning_unit_md:
+        learning_unit_md = "# Learning Unit\n\nLearning unit generation failed."
+
+    quality = check_learning_unit_quality(learning_unit_md)
+    if not quality.get("ok"):
+        retry_prompt = (
+            f"{unit_user_prompt}\n\nQUALITY FIX REQUIRED: Fix these issues: "
+            f"{', '.join(quality.get('issues', []))}. "
+            "Add a decision lens, worked examples, an exercise, and a self-check rubric."
+        )
+        raw_output = call_llm(
+            system_prompt=unit_system_prompt,
+            user_prompt=retry_prompt,
+            model=model,
+            max_tokens=UNIT_MAX_TOKENS,
+        )
+        learning_unit_md = extract_learning_unit(raw_output) or raw_output.strip()
+
+    saved_path = save_day_learning_unit(
+        markdown=learning_unit_md,
+        base_dir=base_dir,
+        day_id=day_id,
+        slug_source=str(day.get("topic") or day_id),
+    )
+    relative_path = _relative_to_base(saved_path, base_dir)
+    _progress, _week, updated_day = update_day_learning_unit_path(
+        path=progress_path,
+        day_id=day_id,
+        learning_unit_path=relative_path,
+    )
+
+    return {
+        "day_id": day_id,
+        "learning_unit_path": relative_path,
+        "progress_path": progress_path.as_posix(),
+        "week_id": week.get("week_id", ""),
+        "topic": updated_day.get("topic", ""),
+    }
+
+
+def tool_generate_quiz_for_day(
+    day_id: str,
+    base_dir: Path,
+    model: str = DEFAULT_MODEL,
+) -> Dict[str, Any]:
+    """Generate and persist a quiz for one day in learning_progress.json."""
+    progress_path = resolve_learning_progress_path(base_dir)
+    progress = load_learning_progress(progress_path)
+    week, day = find_week_and_day(progress, day_id)
+
+    learning_unit_text = _read_relative_text(base_dir, str(day.get("learning_unit_path") or ""))
+    topic = str(day.get("topic") or "Learning day")
+    context_text = (
+        f"Day ID: {day.get('day_id')}\n"
+        f"Day number: {day.get('day_number')}\n"
+        f"Day topic: {topic}\n"
+        f"Estimated minutes: {day.get('estimated_minutes') or 0}\n\n"
+        f"Week title: {week.get('title') or ''}\n"
+        f"Week goal: {week.get('goal') or ''}\n"
+        f"Roadmap: {progress.get('roadmap_id') or 'not provided'}\n"
+        f"Phase: {week.get('phase_id') or 'not provided'}\n"
+        f"Milestone: {week.get('milestone_id') or 'not provided'}\n\n"
+        "Learning unit content:\n"
+        f"{learning_unit_text.strip() if learning_unit_text.strip() else 'No learning unit content available.'}"
+    )
+    user_prompt = (
+        f"Topic: {topic}\n"
+        "Generate a quiz for this exact Day. Base questions primarily on the learning unit content "
+        "when it is available.\n\n"
+        f"{context_text}\n\n"
+        "Generate the quiz now."
+    )
+    quiz_markdown = call_llm(
+        system_prompt=QUIZ_GENERATION_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        model=model,
+    ).strip()
+    if not quiz_markdown:
+        quiz_markdown = "<<QUIZ>>\nQuiz generation failed.\n"
+
+    saved_path = save_day_quiz_markdown(
+        day_id=day_id,
+        topic=topic,
+        quiz_markdown=quiz_markdown,
+        base_dir=base_dir,
+    )
+    relative_path = _relative_to_base(saved_path, base_dir)
+    _progress, _week, updated_day = update_day_quiz_path(
+        path=progress_path,
+        day_id=day_id,
+        quiz_path=relative_path,
+    )
+
+    return {
+        "day_id": day_id,
+        "quiz_path": relative_path,
+        "progress_path": progress_path.as_posix(),
+        "week_id": week.get("week_id", ""),
+        "topic": updated_day.get("topic", ""),
+    }
+
+
+def _review_reason_from_eval(eval_result: Dict[str, Any]) -> str:
+    eval_block = str(eval_result.get("eval_block") or "").strip()
+    if not eval_block:
+        return "Quiz evaluator recommended review."
+    weak_match = re.search(r"Weak areas:\s*(.+)", eval_block, flags=re.IGNORECASE)
+    next_match = re.search(r"Next practice[^:]*:\s*(.+)", eval_block, flags=re.IGNORECASE)
+    parts = []
+    if weak_match:
+        parts.append(f"Weak areas: {weak_match.group(1).strip()}")
+    if next_match:
+        parts.append(f"Next practice: {next_match.group(1).strip()}")
+    return " ".join(parts) if parts else eval_block[:500]
+
+
+def tool_evaluate_quiz_for_day(
+    day_id: str,
+    learner_answers: str,
+    base_dir: Path,
+    model: str = DEFAULT_MODEL,
+    reflection: str = "",
+) -> Dict[str, Any]:
+    """Evaluate one Day quiz and update that Day with PASS/FAIL only."""
+    progress_path = resolve_learning_progress_path(base_dir)
+    progress = load_learning_progress(progress_path)
+    week, day = find_week_and_day(progress, day_id)
+    quiz_markdown = _read_relative_text(base_dir, str(day.get("quiz_path") or ""))
+    if not quiz_markdown.strip():
+        raise FileNotFoundError(f"Quiz not found for day {day_id}: {day.get('quiz_path') or ''}")
+
+    eval_result = evaluate_micro_quiz(
+        topic=str(day.get("topic") or "Learning day"),
+        quiz_markdown=quiz_markdown,
+        learner_answers=learner_answers,
+        model=model,
+    )
+    move_on_decision = str(eval_result.get("move_on_decision") or "").strip().upper()
+    quiz_result = "PASS" if move_on_decision == "MOVE_ON" else "FAIL"
+    review_reason = "" if quiz_result == "PASS" else _review_reason_from_eval(eval_result)
+    _progress, _week, updated_day = update_day_validation_result(
+        path=progress_path,
+        day_id=day_id,
+        quiz_result=quiz_result,
+        reflection=reflection,
+        review_reason=review_reason,
+    )
+
+    return {
+        "day_id": day_id,
+        "quiz_result": updated_day.get("quiz_result", ""),
+        "status": updated_day.get("status", ""),
+        "completed_at": updated_day.get("completed_at", ""),
+        "review_reason": updated_day.get("review_reason", ""),
+        "reflection": updated_day.get("reflection", ""),
+        "progress_path": progress_path.as_posix(),
+        "week_id": week.get("week_id", ""),
+        "evaluation": eval_result,
+    }
+
+
+def tool_generate_review_day(
+    failed_day_id: str,
+    base_dir: Path,
+    model: str = DEFAULT_MODEL,
+    generate_learning_unit: bool = False,
+    generate_quiz: bool = False,
+) -> Dict[str, Any]:
+    """Append a Review Day for a failed Day and optionally generate its artifacts."""
+    progress_path = resolve_learning_progress_path(base_dir)
+    progress, week, review_day = append_review_day(path=progress_path, failed_day_id=failed_day_id)
+
+    learning_unit_path = ""
+    quiz_path = ""
+    if generate_learning_unit:
+        unit_result = tool_generate_learning_unit_for_day(
+            day_id=str(review_day.get("day_id")),
+            base_dir=base_dir,
+            model=model,
+        )
+        learning_unit_path = str(unit_result.get("learning_unit_path") or "")
+    if generate_quiz:
+        quiz_result = tool_generate_quiz_for_day(
+            day_id=str(review_day.get("day_id")),
+            base_dir=base_dir,
+            model=model,
+        )
+        quiz_path = str(quiz_result.get("quiz_path") or "")
+
+    return {
+        "failed_day_id": failed_day_id,
+        "review_day_id": review_day.get("day_id", ""),
+        "week_id": week.get("week_id", ""),
+        "progress_path": progress_path.as_posix(),
+        "learning_unit_path": learning_unit_path,
+        "quiz_path": quiz_path,
+        "week_status": week.get("status", ""),
+        "roadmap_status": progress.get("status", ""),
+    }

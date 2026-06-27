@@ -14,10 +14,15 @@ def resolve_tasks_path(base_dir: Path) -> Path:
     return legacy if legacy.exists() else primary
 
 
+def resolve_learning_progress_path(base_dir: Path) -> Path:
+    return base_dir / "data" / "learning_progress.json"
+
+
 def resolve_reset_paths(base_dir: Path) -> Dict[str, object]:
     data_dir = base_dir / "data"
     return {
         "tasks_path": resolve_tasks_path(base_dir),
+        "learning_progress_path": resolve_learning_progress_path(base_dir),
         "memory_path": base_dir / "docs" / "memory.md",
         "memory_vectors_path": data_dir / "memory_vectors.json",
         "quiz_paths": [

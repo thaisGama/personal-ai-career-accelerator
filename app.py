@@ -14,6 +14,7 @@ from src.agent.tools import (
 )
 from src.agent.reset_utils import resolve_reset_paths, resolve_tasks_path
 from src.agent.task_store import ensure_tasks_file
+from src.agent.learning_progress_store import ensure_learning_progress_file
 import src.agent.weekly_planner as weekly_planner
 from src.core.io.quiz_results_store import append_quiz_results
 from src.core.parsing.quiz_parsing import parse_questions, parse_quiz_sections
@@ -44,7 +45,7 @@ def _safe_delete_path(path: Path, base_dir: Path) -> tuple[bool, str]:
 
 def _collect_reset_targets(scope: str, base_dir: Path) -> list[Path]:
     paths = resolve_reset_paths(base_dir)
-    targets: list[Path] = [paths["tasks_path"]]
+    targets: list[Path] = [paths["tasks_path"], paths["learning_progress_path"]]
     if scope in {"Tasks + quiz history", "Everything"}:
         targets.extend([p for p in paths["quiz_paths"] if p.exists()])
     if scope in {"Tasks + memory", "Everything"}:
@@ -226,6 +227,7 @@ with st.sidebar:
         errors: list[str] = []
         base_dir = BASE_DIR
         tasks_path = resolve_tasks_path(base_dir)
+        learning_progress_path = resolve_reset_paths(base_dir)["learning_progress_path"]
         for target in reset_targets:
             ok, message = _safe_delete_path(target, base_dir)
             if ok:
@@ -236,6 +238,8 @@ with st.sidebar:
                 skipped.append(message)
         ensure_tasks_file(tasks_path)
         deleted.append(tasks_path.as_posix())
+        ensure_learning_progress_file(learning_progress_path)
+        deleted.append(learning_progress_path.as_posix())
         if errors:
             st.error("Reset completed with errors:\n" + "\n".join(errors))
         st.success("Deleted:\n" + "\n".join(deleted))
@@ -577,6 +581,11 @@ with quiz_tab:
             key="quiz_context",
         )
         use_tasks = st.checkbox("Use tasks.csv", value=st.session_state.get("quiz_use_tasks", False), key="quiz_use_tasks")
+        quiz_roadmap_id = st.text_input(
+            "Roadmap ID (optional)",
+            value=st.session_state.get("quiz_roadmap_id", st.session_state.get("active_roadmap_id", "")),
+            key="quiz_roadmap_id",
+        )
         quiz_model = st.text_input(
             "Model", value=getattr(learning_check, "DEFAULT_MODEL", "gpt-4.1-mini"), key="quiz_model"
         )
@@ -613,7 +622,12 @@ with quiz_tab:
     tasks_context = ""
     task_ids = []
     if use_tasks:
-        selection = tool_select_quiz_tasks(tasks_path=BASE_DIR / "data" / "tasks.csv", n=3)
+        effective_quiz_roadmap_id = quiz_roadmap_id.strip() or None
+        selection = tool_select_quiz_tasks(
+            tasks_path=BASE_DIR / "data" / "tasks.csv",
+            n=3,
+            roadmap_id=effective_quiz_roadmap_id,
+        )
         selected_tasks = selection.get("selected_tasks", [])
         task_ids = [task.get("task_id", "") for task in selected_tasks if task.get("task_id")]
         st.session_state["quiz_selected_tasks"] = selected_tasks
@@ -621,7 +635,10 @@ with quiz_tab:
         if selected_tasks:
             lines = [f"- {task.get('task_id')}: {task.get('title')} ({task.get('topic')})" for task in selected_tasks]
             tasks_context = "Tasks for quiz:\n" + "\n".join(lines)
-            st.caption("Using tasks.csv to focus the quiz on open tasks.")
+            if effective_quiz_roadmap_id:
+                st.caption(f"Using tasks.csv to focus the quiz on open tasks for `{effective_quiz_roadmap_id}`.")
+            else:
+                st.caption("Using tasks.csv to focus the quiz on open tasks.")
         else:
             st.warning("No open tasks found in tasks.csv. Quiz will use the topic instead.")
     else:

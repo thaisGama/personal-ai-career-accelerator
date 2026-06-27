@@ -212,15 +212,15 @@ def _extract_micro_task_lines(plan_md: str) -> List[str]:
         if not stripped:
             continue
         lowered = stripped.lower()
-        if "micro tasks" in lowered:
+        if "learning days" in lowered or "micro tasks" in lowered:
             in_section = True
             continue
         if in_section:
-            if stripped.startswith(("#", "🧪", "💬", "📂")) and "micro tasks" not in lowered:
+            if stripped.startswith(("#", "🧪", "💬", "📂")) and "learning days" not in lowered and "micro tasks" not in lowered:
                 break
             if line.lstrip() != line:
                 continue
-            if stripped.startswith(("-", "•")) or stripped.lower().startswith("task "):
+            if stripped.startswith(("-", "•")) or re.match(r"^(day|task)\s+\d+", stripped, flags=re.IGNORECASE):
                 results.append(stripped)
     return results
 
@@ -238,9 +238,9 @@ def _parse_task_line(line: str, default_priority: int) -> Tuple[str, Optional[in
     clean = line.lstrip("-• ").strip()
     clean = clean.replace("**", "")
     task_title = clean
-    task_match = re.search(r"task\s*\d+[^:]*:\s*(.+)", clean, flags=re.IGNORECASE)
-    if task_match:
-        task_title = task_match.group(1).strip()
+    day_or_task_match = re.search(r"(?:day|task)\s*\d+[^:]*:\s*(.+)", clean, flags=re.IGNORECASE)
+    if day_or_task_match:
+        task_title = day_or_task_match.group(1).strip()
     elif ":" in clean:
         task_title = clean.split(":", 1)[-1].strip()
     task_title = re.sub(r"\s*\((\d+)\s*min\)\s*", " ", task_title, flags=re.IGNORECASE).strip()
@@ -342,9 +342,11 @@ def _sort_key_for_task(task: Dict[str, object]) -> Tuple[int, int, float, dateti
     return status_rank, priority, evidence_score, updated_at
 
 
-def select_quiz_tasks(tasks_path: Path, n: int = 3) -> List[Dict[str, object]]:
+def select_quiz_tasks(tasks_path: Path, n: int = 3, roadmap_id: str | None = None) -> List[Dict[str, object]]:
     tasks = load_tasks(tasks_path)
     candidates = [task for task in tasks if task.get("status") in OPEN_STATUSES]
+    if roadmap_id:
+        candidates = [task for task in candidates if task.get("roadmap_id") == roadmap_id]
     sorted_tasks = sorted(candidates, key=_sort_key_for_task)
     return [
         {
@@ -354,6 +356,7 @@ def select_quiz_tasks(tasks_path: Path, n: int = 3) -> List[Dict[str, object]]:
             "status": task.get("status", ""),
             "priority": task.get("priority", 3),
             "evidence_score": task.get("evidence_score", 0.0),
+            "roadmap_id": task.get("roadmap_id", ""),
         }
         for task in sorted_tasks[:n]
     ]

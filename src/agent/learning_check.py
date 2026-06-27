@@ -75,6 +75,23 @@ def save_quiz_markdown(topic: str, quiz_markdown: str, base_dir: Path | str = ".
     return path
 
 
+def save_day_quiz_markdown(
+    day_id: str,
+    topic: str,
+    quiz_markdown: str,
+    base_dir: Path | str = ".",
+) -> Path:
+    """Persist a day-specific quiz under docs/quizzes."""
+    root = Path(base_dir)
+    quizzes_dir = root / "docs" / "quizzes"
+    quizzes_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{day_id}_{slugify(topic)}.md"
+    path = quizzes_dir / filename
+    path.write_text(quiz_markdown.strip(), encoding="utf-8")
+    return path
+
+
 def generate_micro_quiz(
     topic: str,
     context_text: Optional[str] = None,
