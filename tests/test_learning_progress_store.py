@@ -10,9 +10,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.agent.learning_progress_store import (
     append_week_from_plan,
+    compute_week_status,
     ensure_learning_progress_file,
     find_week_and_day,
     load_learning_progress,
+    recompute_progress_statuses,
     save_learning_progress,
     update_day_learning_unit_path,
     update_day_quiz_path,
@@ -206,6 +208,7 @@ def test_update_day_validation_result_passes_day(tmp_path: Path):
     assert day["completed_at"] == "2026-06-27T18:30:00+00:00"
     assert day["reflection"] == "This clicked."
     assert day["review_reason"] == ""
+    assert _week["status"] == "PASSED"
 
 
 def test_update_day_validation_result_fails_day(tmp_path: Path):
@@ -232,3 +235,122 @@ def test_update_day_validation_result_fails_day(tmp_path: Path):
     assert day["completed_at"] == "2026-06-27T18:30:00+00:00"
     assert day["reflection"] == "I need another pass."
     assert day["review_reason"] == "Weak areas: terminology."
+    assert _week["status"] == "NEEDS_REVIEW"
+
+
+def test_compute_week_status_from_day_statuses():
+    assert compute_week_status({"days": []}) == "TODO"
+    assert compute_week_status({"days": [{"status": "TODO"}, {"status": "TODO"}]}) == "TODO"
+    assert compute_week_status({"days": [{"status": "PASSED"}, {"status": "TODO"}]}) == "IN_PROGRESS"
+    assert compute_week_status({"days": [{"status": "IN_PROGRESS"}, {"status": "TODO"}]}) == "IN_PROGRESS"
+    assert compute_week_status({"days": [{"status": "PASSED"}, {"status": "PASSED"}]}) == "PASSED"
+    assert compute_week_status({"days": [{"status": "PASSED"}, {"status": "NEEDS_REVIEW"}]}) == "NEEDS_REVIEW"
+
+
+def test_recompute_progress_statuses_rolls_up_week_milestone_phase_and_roadmap():
+    progress = {
+        "roadmap_id": "goal_test",
+        "status": "TODO",
+        "weeks": [
+            {
+                "week_id": "week_001",
+                "phase_id": "P1",
+                "milestone_id": "M1.1",
+                "status": "TODO",
+                "days": [{"day_id": "day_001", "status": "PASSED"}],
+            },
+            {
+                "week_id": "week_002",
+                "phase_id": "P1",
+                "milestone_id": "M1.1",
+                "status": "TODO",
+                "days": [{"day_id": "day_002", "status": "TODO"}],
+            },
+            {
+                "week_id": "week_003",
+                "phase_id": "P2",
+                "milestone_id": "M2.1",
+                "status": "TODO",
+                "days": [{"day_id": "day_003", "status": "TODO"}],
+            },
+        ],
+    }
+
+    recompute_progress_statuses(progress)
+
+    assert [week["status"] for week in progress["weeks"]] == ["PASSED", "TODO", "TODO"]
+    assert progress["milestones"] == [
+        {"milestone_id": "M1.1", "phase_id": "P1", "status": "IN_PROGRESS"},
+        {"milestone_id": "M2.1", "phase_id": "P2", "status": "TODO"},
+    ]
+    assert progress["phases"] == [
+        {"phase_id": "P1", "status": "IN_PROGRESS"},
+        {"phase_id": "P2", "status": "TODO"},
+    ]
+    assert progress["status"] == "IN_PROGRESS"
+
+
+def test_recompute_progress_statuses_needs_review_takes_precedence():
+    progress = {
+        "roadmap_id": "goal_test",
+        "status": "TODO",
+        "weeks": [
+            {
+                "week_id": "week_001",
+                "phase_id": "P1",
+                "milestone_id": "M1.1",
+                "status": "TODO",
+                "days": [{"day_id": "day_001", "status": "PASSED"}],
+            },
+            {
+                "week_id": "week_002",
+                "phase_id": "P1",
+                "milestone_id": "M1.1",
+                "status": "TODO",
+                "days": [{"day_id": "day_002", "status": "NEEDS_REVIEW"}],
+            },
+        ],
+    }
+
+    recompute_progress_statuses(progress)
+
+    assert [week["status"] for week in progress["weeks"]] == ["PASSED", "NEEDS_REVIEW"]
+    assert progress["milestones"][0]["status"] == "NEEDS_REVIEW"
+    assert progress["phases"][0]["status"] == "NEEDS_REVIEW"
+    assert progress["status"] == "NEEDS_REVIEW"
+
+
+def test_update_day_validation_result_recomputes_parent_statuses(tmp_path: Path):
+    progress_path = tmp_path / "data" / "learning_progress.json"
+    append_week_from_plan(
+        progress_path,
+        """🧩 Learning Days (10–30 min)
+- 🔥 **Day 1 (20 min): First topic** [phase:P1][milestone:M1.1]
+- ⭐ **Day 2 (15 min): Second topic** [phase:P1][milestone:M1.1]
+""",
+        roadmap_id="goal_test",
+    )
+
+    progress, week, _day = update_day_validation_result(
+        progress_path,
+        day_id="day_001",
+        quiz_result="PASS",
+        completed_at="2026-06-27T18:30:00+00:00",
+    )
+
+    assert week["status"] == "IN_PROGRESS"
+    assert progress["milestones"][0]["status"] == "IN_PROGRESS"
+    assert progress["phases"][0]["status"] == "IN_PROGRESS"
+    assert progress["status"] == "IN_PROGRESS"
+
+    progress, week, _day = update_day_validation_result(
+        progress_path,
+        day_id="day_002",
+        quiz_result="PASS",
+        completed_at="2026-06-27T18:40:00+00:00",
+    )
+
+    assert week["status"] == "PASSED"
+    assert progress["milestones"][0]["status"] == "PASSED"
+    assert progress["phases"][0]["status"] == "PASSED"
+    assert progress["status"] == "PASSED"

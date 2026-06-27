@@ -102,8 +102,91 @@ def update_day_validation_result(
     day["completed_at"] = completed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     day["reflection"] = reflection
     day["review_reason"] = "" if normalized == "PASS" else review_reason
+    recompute_progress_statuses(progress)
     save_learning_progress(path, progress)
     return progress, week, day
+
+
+def _status_from_children(statuses: List[str]) -> str:
+    normalized = [str(status or "TODO").upper() for status in statuses]
+    if not normalized:
+        return "TODO"
+    if all(status == "PASSED" for status in normalized):
+        return "PASSED"
+    if any(status == "NEEDS_REVIEW" for status in normalized):
+        return "NEEDS_REVIEW"
+    if any(status in {"IN_PROGRESS", "PASSED"} for status in normalized):
+        return "IN_PROGRESS"
+    return "TODO"
+
+
+def compute_week_status(week: Dict[str, Any]) -> str:
+    return _status_from_children([str(day.get("status") or "TODO") for day in week.get("days", [])])
+
+
+def recompute_progress_statuses(progress: Dict[str, Any]) -> Dict[str, Any]:
+    weeks = progress.setdefault("weeks", [])
+    for week in weeks:
+        week["status"] = compute_week_status(week)
+
+    milestone_entries: List[Dict[str, Any]] = []
+    milestone_order: List[str] = []
+    milestone_weeks: Dict[str, List[Dict[str, Any]]] = {}
+    milestone_phase: Dict[str, str] = {}
+    for week in weeks:
+        milestone_id = str(week.get("milestone_id") or "")
+        if not milestone_id:
+            continue
+        if milestone_id not in milestone_weeks:
+            milestone_order.append(milestone_id)
+            milestone_weeks[milestone_id] = []
+            milestone_phase[milestone_id] = str(week.get("phase_id") or "")
+        milestone_weeks[milestone_id].append(week)
+
+    for milestone_id in milestone_order:
+        grouped_weeks = milestone_weeks[milestone_id]
+        milestone_entries.append(
+            {
+                "milestone_id": milestone_id,
+                "phase_id": milestone_phase.get(milestone_id, ""),
+                "status": _status_from_children([str(week.get("status") or "TODO") for week in grouped_weeks]),
+            }
+        )
+    progress["milestones"] = milestone_entries
+
+    phase_entries: List[Dict[str, Any]] = []
+    phase_order: List[str] = []
+    phase_milestones: Dict[str, List[Dict[str, Any]]] = {}
+    for milestone in milestone_entries:
+        phase_id = str(milestone.get("phase_id") or "")
+        if not phase_id:
+            continue
+        if phase_id not in phase_milestones:
+            phase_order.append(phase_id)
+            phase_milestones[phase_id] = []
+        phase_milestones[phase_id].append(milestone)
+
+    for phase_id in phase_order:
+        grouped_milestones = phase_milestones[phase_id]
+        phase_entries.append(
+            {
+                "phase_id": phase_id,
+                "status": _status_from_children(
+                    [str(milestone.get("status") or "TODO") for milestone in grouped_milestones]
+                ),
+            }
+        )
+    progress["phases"] = phase_entries
+
+    if phase_entries:
+        progress["status"] = _status_from_children([str(phase.get("status") or "TODO") for phase in phase_entries])
+    elif milestone_entries:
+        progress["status"] = _status_from_children(
+            [str(milestone.get("status") or "TODO") for milestone in milestone_entries]
+        )
+    else:
+        progress["status"] = _status_from_children([str(week.get("status") or "TODO") for week in weeks])
+    return progress
 
 
 def _next_week_id(progress: Dict[str, Any]) -> str:
@@ -224,11 +307,13 @@ def append_week_from_plan(
 
 __all__ = [
     "append_week_from_plan",
+    "compute_week_status",
     "empty_learning_progress",
     "ensure_learning_progress_file",
     "find_week_and_day",
     "load_learning_progress",
     "parse_days_from_plan",
+    "recompute_progress_statuses",
     "resolve_learning_progress_path",
     "save_learning_progress",
     "update_day_learning_unit_path",
