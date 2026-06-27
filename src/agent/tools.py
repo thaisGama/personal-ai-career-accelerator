@@ -785,10 +785,10 @@ def tool_upsert_tasks_from_plan(
 
 
 def tool_select_quiz_tasks(
-    tasks_path: Path, n: int = 3, strategy: str = "priority+weakness"
+    tasks_path: Path, n: int = 3, strategy: str = "priority+weakness", roadmap_id: str | None = None
 ) -> Dict[str, Any]:
     _ = strategy
-    tasks = select_quiz_tasks(tasks_path, n=n)
+    tasks = select_quiz_tasks(tasks_path, n=n, roadmap_id=roadmap_id)
     return {"selected_tasks": tasks, "tasks_path": tasks_path.as_posix()}
 
 

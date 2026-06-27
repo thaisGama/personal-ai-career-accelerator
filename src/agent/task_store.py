@@ -342,9 +342,11 @@ def _sort_key_for_task(task: Dict[str, object]) -> Tuple[int, int, float, dateti
     return status_rank, priority, evidence_score, updated_at
 
 
-def select_quiz_tasks(tasks_path: Path, n: int = 3) -> List[Dict[str, object]]:
+def select_quiz_tasks(tasks_path: Path, n: int = 3, roadmap_id: str | None = None) -> List[Dict[str, object]]:
     tasks = load_tasks(tasks_path)
     candidates = [task for task in tasks if task.get("status") in OPEN_STATUSES]
+    if roadmap_id:
+        candidates = [task for task in candidates if task.get("roadmap_id") == roadmap_id]
     sorted_tasks = sorted(candidates, key=_sort_key_for_task)
     return [
         {
@@ -354,6 +356,7 @@ def select_quiz_tasks(tasks_path: Path, n: int = 3) -> List[Dict[str, object]]:
             "status": task.get("status", ""),
             "priority": task.get("priority", 3),
             "evidence_score": task.get("evidence_score", 0.0),
+            "roadmap_id": task.get("roadmap_id", ""),
         }
         for task in sorted_tasks[:n]
     ]

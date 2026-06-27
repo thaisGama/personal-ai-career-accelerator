@@ -577,6 +577,11 @@ with quiz_tab:
             key="quiz_context",
         )
         use_tasks = st.checkbox("Use tasks.csv", value=st.session_state.get("quiz_use_tasks", False), key="quiz_use_tasks")
+        quiz_roadmap_id = st.text_input(
+            "Roadmap ID (optional)",
+            value=st.session_state.get("quiz_roadmap_id", st.session_state.get("active_roadmap_id", "")),
+            key="quiz_roadmap_id",
+        )
         quiz_model = st.text_input(
             "Model", value=getattr(learning_check, "DEFAULT_MODEL", "gpt-4.1-mini"), key="quiz_model"
         )
@@ -613,7 +618,12 @@ with quiz_tab:
     tasks_context = ""
     task_ids = []
     if use_tasks:
-        selection = tool_select_quiz_tasks(tasks_path=BASE_DIR / "data" / "tasks.csv", n=3)
+        effective_quiz_roadmap_id = quiz_roadmap_id.strip() or None
+        selection = tool_select_quiz_tasks(
+            tasks_path=BASE_DIR / "data" / "tasks.csv",
+            n=3,
+            roadmap_id=effective_quiz_roadmap_id,
+        )
         selected_tasks = selection.get("selected_tasks", [])
         task_ids = [task.get("task_id", "") for task in selected_tasks if task.get("task_id")]
         st.session_state["quiz_selected_tasks"] = selected_tasks
@@ -621,7 +631,10 @@ with quiz_tab:
         if selected_tasks:
             lines = [f"- {task.get('task_id')}: {task.get('title')} ({task.get('topic')})" for task in selected_tasks]
             tasks_context = "Tasks for quiz:\n" + "\n".join(lines)
-            st.caption("Using tasks.csv to focus the quiz on open tasks.")
+            if effective_quiz_roadmap_id:
+                st.caption(f"Using tasks.csv to focus the quiz on open tasks for `{effective_quiz_roadmap_id}`.")
+            else:
+                st.caption("Using tasks.csv to focus the quiz on open tasks.")
         else:
             st.warning("No open tasks found in tasks.csv. Quiz will use the topic instead.")
     else:
