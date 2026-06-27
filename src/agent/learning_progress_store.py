@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -78,6 +79,29 @@ def update_day_quiz_path(
     progress = load_learning_progress(path)
     week, day = find_week_and_day(progress, day_id)
     day["quiz_path"] = quiz_path
+    save_learning_progress(path, progress)
+    return progress, week, day
+
+
+def update_day_validation_result(
+    path: Path,
+    day_id: str,
+    quiz_result: str,
+    reflection: str = "",
+    review_reason: str = "",
+    completed_at: str | None = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    normalized = quiz_result.strip().upper()
+    if normalized not in {"PASS", "FAIL"}:
+        raise ValueError(f"Unsupported quiz result: {quiz_result}")
+
+    progress = load_learning_progress(path)
+    week, day = find_week_and_day(progress, day_id)
+    day["quiz_result"] = normalized
+    day["status"] = "PASSED" if normalized == "PASS" else "NEEDS_REVIEW"
+    day["completed_at"] = completed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    day["reflection"] = reflection
+    day["review_reason"] = "" if normalized == "PASS" else review_reason
     save_learning_progress(path, progress)
     return progress, week, day
 
@@ -209,4 +233,5 @@ __all__ = [
     "save_learning_progress",
     "update_day_learning_unit_path",
     "update_day_quiz_path",
+    "update_day_validation_result",
 ]

@@ -29,8 +29,9 @@ from .learning_progress_store import (
     resolve_learning_progress_path,
     update_day_learning_unit_path,
     update_day_quiz_path,
+    update_day_validation_result,
 )
-from .learning_check import QUIZ_GENERATION_SYSTEM_PROMPT, save_day_quiz_markdown
+from .learning_check import QUIZ_GENERATION_SYSTEM_PROMPT, evaluate_micro_quiz, save_day_quiz_markdown
 from .task_store import (
     TaskProgressSummary,
     load_tasks,
@@ -1024,4 +1025,63 @@ def tool_generate_quiz_for_day(
         "progress_path": progress_path.as_posix(),
         "week_id": week.get("week_id", ""),
         "topic": updated_day.get("topic", ""),
+    }
+
+
+def _review_reason_from_eval(eval_result: Dict[str, Any]) -> str:
+    eval_block = str(eval_result.get("eval_block") or "").strip()
+    if not eval_block:
+        return "Quiz evaluator recommended review."
+    weak_match = re.search(r"Weak areas:\s*(.+)", eval_block, flags=re.IGNORECASE)
+    next_match = re.search(r"Next practice[^:]*:\s*(.+)", eval_block, flags=re.IGNORECASE)
+    parts = []
+    if weak_match:
+        parts.append(f"Weak areas: {weak_match.group(1).strip()}")
+    if next_match:
+        parts.append(f"Next practice: {next_match.group(1).strip()}")
+    return " ".join(parts) if parts else eval_block[:500]
+
+
+def tool_evaluate_quiz_for_day(
+    day_id: str,
+    learner_answers: str,
+    base_dir: Path,
+    model: str = DEFAULT_MODEL,
+    reflection: str = "",
+) -> Dict[str, Any]:
+    """Evaluate one Day quiz and update that Day with PASS/FAIL only."""
+    progress_path = resolve_learning_progress_path(base_dir)
+    progress = load_learning_progress(progress_path)
+    week, day = find_week_and_day(progress, day_id)
+    quiz_markdown = _read_relative_text(base_dir, str(day.get("quiz_path") or ""))
+    if not quiz_markdown.strip():
+        raise FileNotFoundError(f"Quiz not found for day {day_id}: {day.get('quiz_path') or ''}")
+
+    eval_result = evaluate_micro_quiz(
+        topic=str(day.get("topic") or "Learning day"),
+        quiz_markdown=quiz_markdown,
+        learner_answers=learner_answers,
+        model=model,
+    )
+    move_on_decision = str(eval_result.get("move_on_decision") or "").strip().upper()
+    quiz_result = "PASS" if move_on_decision == "MOVE_ON" else "FAIL"
+    review_reason = "" if quiz_result == "PASS" else _review_reason_from_eval(eval_result)
+    _progress, _week, updated_day = update_day_validation_result(
+        path=progress_path,
+        day_id=day_id,
+        quiz_result=quiz_result,
+        reflection=reflection,
+        review_reason=review_reason,
+    )
+
+    return {
+        "day_id": day_id,
+        "quiz_result": updated_day.get("quiz_result", ""),
+        "status": updated_day.get("status", ""),
+        "completed_at": updated_day.get("completed_at", ""),
+        "review_reason": updated_day.get("review_reason", ""),
+        "reflection": updated_day.get("reflection", ""),
+        "progress_path": progress_path.as_posix(),
+        "week_id": week.get("week_id", ""),
+        "evaluation": eval_result,
     }
