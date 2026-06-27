@@ -70,13 +70,13 @@ Day 3: <short theme>
 Day 4: <short theme>
 Day 5: <short theme>
 
-In the section "🧩 Micro Tasks (10–30 min)", generate 3–5 very concrete micro-tasks.
+In the section "🧩 Learning Days (10–30 min)", generate 3–5 very concrete learning days.
 
-Each micro-task MUST include:
+Each learning day MUST include:
 
 - A title + duration + priority emoji (🔥 high, ⭐ medium, 🌱 low)
 - A Learning capsule (a short, self-contained explanation of the core idea, length depends on Learning intensity)
-- A Key takeaways list (3–5 bullets of what the user should know after this task)
+- A Key takeaways list (3–5 bullets of what the user should know after this day)
 - A Suggested resource (optional) – at most ONE resource:
   - Prefer either:
     - a well-known canonical source by name (official docs, papers, blogs), OR
@@ -85,11 +85,11 @@ Each micro-task MUST include:
   - Avoid "search YouTube" as a primary method; videos are OK only when a named canonical source is suggested.
 - A tiny Output (what the user will produce), like updating a notes file or running a small example.
 
-Use this exact markdown structure for each micro-task:
+Use this exact markdown structure for each learning day:
 
-- 🔥 **Task 1 (20 min): Short title here**  
+- 🔥 **Day 1 (20 min): Short title here**  
   - **Learning capsule (length by intensity):**  
-    Short, focused explanation of the core idea for this task that the user can read without leaving the file.
+    Short, focused explanation of the core idea for this day that the user can read without leaving the file.
   - **Key takeaways:**  
     - bullet 1  
     - bullet 2  
@@ -156,19 +156,19 @@ Scope:
 
 Always use the exact week number shown in the heading template above.
 
-For every micro-task in the "🧩 Micro Tasks" section, assign one priority tag:
+For every learning day in the "🧩 Learning Days" section, assign one priority tag:
 - 🔥 High priority (critical for the week's goal)
 - ⭐ Medium priority (helpful but not essential)
 - 🌱 Low priority (optional stretch task)
 
-Follow the micro-task structure shown above (include priority emoji, resource, what you'll learn bullets, and output).
+Follow the learning-day structure shown above (include priority emoji, resource, what you'll learn bullets, and output).
 If ROADMAP PROGRESS is provided, add a short "🧭 Roadmap Context" block right after the Week title with:
 - Roadmap: topic | Target level
 - Total estimate + typical duration at 2h/week
 - Current focus: Phase P?, Milestone M?
 - Week number (approx)
 - Remaining hours (rough estimate)
-If ROADMAP CONTEXT is provided, align micro-tasks to the current milestone and append tags to each micro-task title:
+If ROADMAP CONTEXT is provided, align learning days to the current milestone and append tags to each learning-day title:
 [phase:P#][milestone:M#.#][depth:intro|operational]
 Learning capsule length guidance by intensity:
 - light: ~100–150 words

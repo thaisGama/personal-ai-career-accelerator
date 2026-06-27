@@ -63,8 +63,8 @@ Day 1: Foundations
 Day 2: Practice
 Day 3: Review
 
-🧩 Micro Tasks
-- Task 1
+🧩 Learning Days
+- Day 1
 """
 
     cleaned = remove_duplicate_daily_breakdown_sections(raw)
@@ -75,7 +75,7 @@ Day 3: Review
     assert cleaned.count("Day 3: Review") == 1
     assert "- Day 1: Foundations" in cleaned
     assert "\nDay 1: Foundations" not in cleaned
-    assert "🧩 Micro Tasks" in cleaned
+    assert "🧩 Learning Days" in cleaned
 
 
 def test_save_weekly_plan_creates_file_and_dir(tmp_path: Path):
@@ -119,6 +119,10 @@ def test_build_weekly_planner_prompt_includes_memory_audit_when_used():
     assert "Memory used: YES" in system_prompt
     assert "Memory source: docs/memory.md" in system_prompt
     assert "Memory characters injected: 123" in system_prompt
+    assert "🧩 Learning Days" in system_prompt
+    assert "Day 1" in system_prompt
+    assert "Task 1" not in system_prompt
+    assert "Micro Tasks" not in system_prompt
 
 
 def test_build_weekly_planner_prompt_includes_memory_audit_when_not_used():

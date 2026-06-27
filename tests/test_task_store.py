@@ -39,6 +39,34 @@ def test_upsert_tasks_from_plan_creates_tasks(tmp_path: Path):
     assert "Write retrieval notes" in titles
 
 
+def test_upsert_tasks_from_plan_still_parses_legacy_task_lines(tmp_path: Path):
+    plan_md = """# Week X Learning Plan
+
+🧩 Micro Tasks (10–30 min)
+- 🔥 **Task 1 (20 min): Understand embeddings basics**
+- ⭐ **Task 2 (15 min): Build a simple vector index**
+
+🧪 Mini Project for the Week
+Title: Example
+"""
+    tasks_path = tmp_path / "tasks.csv"
+
+    created, updated = upsert_tasks_from_plan(
+        plan_md=plan_md,
+        tasks_path=tasks_path,
+        source_week="2025-01-05",
+        default_priority=3,
+    )
+
+    tasks = load_tasks(tasks_path)
+    titles = [task.get("title") for task in tasks]
+
+    assert created == 2
+    assert updated == 0
+    assert "Understand embeddings basics" in titles
+    assert "Build a simple vector index" in titles
+
+
 def test_update_tasks_from_quiz_results_rolling_avg_and_propose(tmp_path: Path):
     fixture = PROJECT_ROOT / "tests" / "fixtures" / "sample_tasks.csv"
     tasks_path = tmp_path / "tasks.csv"

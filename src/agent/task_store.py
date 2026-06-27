@@ -212,15 +212,15 @@ def _extract_micro_task_lines(plan_md: str) -> List[str]:
         if not stripped:
             continue
         lowered = stripped.lower()
-        if "micro tasks" in lowered:
+        if "learning days" in lowered or "micro tasks" in lowered:
             in_section = True
             continue
         if in_section:
-            if stripped.startswith(("#", "🧪", "💬", "📂")) and "micro tasks" not in lowered:
+            if stripped.startswith(("#", "🧪", "💬", "📂")) and "learning days" not in lowered and "micro tasks" not in lowered:
                 break
             if line.lstrip() != line:
                 continue
-            if stripped.startswith(("-", "•")) or stripped.lower().startswith("task "):
+            if stripped.startswith(("-", "•")) or re.match(r"^(day|task)\s+\d+", stripped, flags=re.IGNORECASE):
                 results.append(stripped)
     return results
 
@@ -238,9 +238,9 @@ def _parse_task_line(line: str, default_priority: int) -> Tuple[str, Optional[in
     clean = line.lstrip("-• ").strip()
     clean = clean.replace("**", "")
     task_title = clean
-    task_match = re.search(r"task\s*\d+[^:]*:\s*(.+)", clean, flags=re.IGNORECASE)
-    if task_match:
-        task_title = task_match.group(1).strip()
+    day_or_task_match = re.search(r"(?:day|task)\s*\d+[^:]*:\s*(.+)", clean, flags=re.IGNORECASE)
+    if day_or_task_match:
+        task_title = day_or_task_match.group(1).strip()
     elif ":" in clean:
         task_title = clean.split(":", 1)[-1].strip()
     task_title = re.sub(r"\s*\((\d+)\s*min\)\s*", " ", task_title, flags=re.IGNORECASE).strip()
