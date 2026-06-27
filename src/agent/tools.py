@@ -24,6 +24,7 @@ from .weekly_planner import (
     save_week_files,
 )
 from .learning_progress_store import (
+    append_review_day,
     find_week_and_day,
     load_learning_progress,
     resolve_learning_progress_path,
@@ -1084,4 +1085,44 @@ def tool_evaluate_quiz_for_day(
         "progress_path": progress_path.as_posix(),
         "week_id": week.get("week_id", ""),
         "evaluation": eval_result,
+    }
+
+
+def tool_generate_review_day(
+    failed_day_id: str,
+    base_dir: Path,
+    model: str = DEFAULT_MODEL,
+    generate_learning_unit: bool = False,
+    generate_quiz: bool = False,
+) -> Dict[str, Any]:
+    """Append a Review Day for a failed Day and optionally generate its artifacts."""
+    progress_path = resolve_learning_progress_path(base_dir)
+    progress, week, review_day = append_review_day(path=progress_path, failed_day_id=failed_day_id)
+
+    learning_unit_path = ""
+    quiz_path = ""
+    if generate_learning_unit:
+        unit_result = tool_generate_learning_unit_for_day(
+            day_id=str(review_day.get("day_id")),
+            base_dir=base_dir,
+            model=model,
+        )
+        learning_unit_path = str(unit_result.get("learning_unit_path") or "")
+    if generate_quiz:
+        quiz_result = tool_generate_quiz_for_day(
+            day_id=str(review_day.get("day_id")),
+            base_dir=base_dir,
+            model=model,
+        )
+        quiz_path = str(quiz_result.get("quiz_path") or "")
+
+    return {
+        "failed_day_id": failed_day_id,
+        "review_day_id": review_day.get("day_id", ""),
+        "week_id": week.get("week_id", ""),
+        "progress_path": progress_path.as_posix(),
+        "learning_unit_path": learning_unit_path,
+        "quiz_path": quiz_path,
+        "week_status": week.get("status", ""),
+        "roadmap_status": progress.get("status", ""),
     }

@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.agent.learning_progress_store import (
+    append_review_day,
     append_week_from_plan,
     compute_week_status,
     ensure_learning_progress_file,
@@ -353,4 +354,89 @@ def test_update_day_validation_result_recomputes_parent_statuses(tmp_path: Path)
     assert week["status"] == "PASSED"
     assert progress["milestones"][0]["status"] == "PASSED"
     assert progress["phases"][0]["status"] == "PASSED"
+    assert progress["status"] == "PASSED"
+
+
+def test_append_review_day_adds_review_to_same_week_and_preserves_failed_day(tmp_path: Path):
+    progress_path = tmp_path / "data" / "learning_progress.json"
+    append_week_from_plan(
+        progress_path,
+        """🧩 Learning Days (10–30 min)
+- 🔥 **Day 1 (20 min): First topic** [phase:P1][milestone:M1.1]
+""",
+        roadmap_id="goal_test",
+    )
+    update_day_validation_result(
+        progress_path,
+        day_id="day_001",
+        quiz_result="FAIL",
+        review_reason="Weak answer on retrieval concepts.",
+        completed_at="2026-06-27T18:30:00+00:00",
+    )
+
+    progress, week, review_day = append_review_day(progress_path, failed_day_id="day_001")
+
+    assert week["week_id"] == "week_001"
+    assert [day["day_id"] for day in week["days"]] == ["day_001", "day_002"]
+    failed_day = week["days"][0]
+    assert failed_day["status"] == "NEEDS_REVIEW"
+    assert failed_day["quiz_result"] == "FAIL"
+    assert review_day == {
+        "day_id": "day_002",
+        "day_number": 2,
+        "topic": "Review: First topic",
+        "estimated_minutes": 20,
+        "learning_unit_path": "",
+        "quiz_path": "",
+        "status": "TODO",
+        "quiz_result": "",
+        "completed_at": "",
+        "reflection": "",
+        "review_reason": "Weak answer on retrieval concepts.",
+        "is_review": True,
+        "review_of_day_id": "day_001",
+    }
+    assert week["status"] == "NEEDS_REVIEW"
+    assert progress["status"] == "NEEDS_REVIEW"
+
+
+def test_append_review_day_requires_failed_day(tmp_path: Path):
+    progress_path = tmp_path / "data" / "learning_progress.json"
+    append_week_from_plan(
+        progress_path,
+        """🧩 Learning Days (10–30 min)
+- 🔥 **Day 1 (20 min): First topic**
+""",
+        roadmap_id="goal_test",
+    )
+
+    try:
+        append_review_day(progress_path, failed_day_id="day_001")
+    except ValueError as exc:
+        assert "NEEDS_REVIEW" in str(exc)
+    else:
+        raise AssertionError("Expected append_review_day to reject non-failed Day")
+
+
+def test_week_with_review_day_passes_only_after_all_days_pass(tmp_path: Path):
+    progress_path = tmp_path / "data" / "learning_progress.json"
+    append_week_from_plan(
+        progress_path,
+        """🧩 Learning Days (10–30 min)
+- 🔥 **Day 1 (20 min): First topic** [phase:P1][milestone:M1.1]
+""",
+        roadmap_id="goal_test",
+    )
+    update_day_validation_result(progress_path, day_id="day_001", quiz_result="FAIL")
+    append_review_day(progress_path, failed_day_id="day_001")
+
+    progress = load_learning_progress(progress_path)
+    assert progress["weeks"][0]["status"] == "NEEDS_REVIEW"
+
+    update_day_validation_result(progress_path, day_id="day_001", quiz_result="PASS")
+    progress = load_learning_progress(progress_path)
+    assert progress["weeks"][0]["status"] == "IN_PROGRESS"
+
+    progress, week, _day = update_day_validation_result(progress_path, day_id="day_002", quiz_result="PASS")
+    assert week["status"] == "PASSED"
     assert progress["status"] == "PASSED"

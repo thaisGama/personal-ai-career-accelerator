@@ -107,6 +107,45 @@ def update_day_validation_result(
     return progress, week, day
 
 
+def _next_day_number(week: Dict[str, Any]) -> int:
+    day_numbers = [int(day.get("day_number") or 0) for day in week.get("days", [])]
+    return max(day_numbers, default=0) + 1
+
+
+def append_review_day(
+    path: Path,
+    failed_day_id: str,
+    estimated_minutes: int | None = None,
+    review_reason: str | None = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    progress = load_learning_progress(path)
+    week, failed_day = find_week_and_day(progress, failed_day_id)
+    if failed_day.get("status") != "NEEDS_REVIEW":
+        raise ValueError(f"Review Day requires NEEDS_REVIEW status: {failed_day_id}")
+
+    next_day = _next_day_start(progress)
+    topic = str(failed_day.get("topic") or "Learning day")
+    review_day = {
+        "day_id": f"day_{next_day:03d}",
+        "day_number": _next_day_number(week),
+        "topic": f"Review: {topic}",
+        "estimated_minutes": estimated_minutes or int(failed_day.get("estimated_minutes") or 20) or 20,
+        "learning_unit_path": "",
+        "quiz_path": "",
+        "status": "TODO",
+        "quiz_result": "",
+        "completed_at": "",
+        "reflection": "",
+        "review_reason": review_reason if review_reason is not None else str(failed_day.get("review_reason") or ""),
+        "is_review": True,
+        "review_of_day_id": failed_day_id,
+    }
+    week.setdefault("days", []).append(review_day)
+    recompute_progress_statuses(progress)
+    save_learning_progress(path, progress)
+    return progress, week, review_day
+
+
 def _status_from_children(statuses: List[str]) -> str:
     normalized = [str(status or "TODO").upper() for status in statuses]
     if not normalized:
@@ -307,6 +346,7 @@ def append_week_from_plan(
 
 __all__ = [
     "append_week_from_plan",
+    "append_review_day",
     "compute_week_status",
     "empty_learning_progress",
     "ensure_learning_progress_file",
