@@ -527,6 +527,53 @@ Task
 → Day
 ```
 
+# Sprint Audit and Follow-up PRs — 2026-10-05
+
+This audit checks the current repository rather than treating the sprint descriptions as completion claims. The original sprint goals and acceptance criteria above remain unchanged. Implementation, integration, and validation are recorded separately. No attached audit snapshot was available in this checkout; evidence below comes from code, tests, and the recorded evaluations in [EVALS.md](EVALS.md).
+
+| Sprint | Implementation status | Integration status | Validation status | Remaining gap / follow-up |
+| --- | --- | --- | --- | --- |
+| 1 — Days in planner output | Day prompts and parsing implemented; legacy task compatibility remains. | Both planner modes append day-centric progress, but tasks still participate in orchestration and quiz UI. | Parser tests and EVAL-003 cover Day output; live LLM wording is not guaranteed by deterministic tests. | [PR 3](#provisional-pr-3--day-learning-and-quiz-ui) for day-centric interaction; [PR 5](#provisional-pr-5--generation-policy-and-quality) for output policy. |
+| 2 — Progress store | Create/load/append implemented in `learning_progress_store.py`. | Both generation paths persist progress; `tasks.csv` remains part of planning and quiz flows. | Persistence tests; EVAL-003 records stored Weeks/Days. | [PR 4](#provisional-pr-4--progression-integration) for source-of-truth integration. |
+| 3 — Weeks with Days | Week/Day extraction and ownership metadata implemented. | Wired into direct planner and ReAct save outputs; legacy tasks still written. | Week parsing/ownership tests; EVAL-003 records generated Days. | [PR 4](#provisional-pr-4--progression-integration) for task-independent progression/planning. |
+| 4 — Learning Unit per Day | `tool_generate_learning_unit_for_day` saves and links a Day artifact. | Planner still eagerly generates a whole-week unit; UI lacks Day learning-unit action. | Focused tool test passes; recorded learning-unit alignment evaluation is PARTIAL. | [PR 2](#provisional-pr-2--day-content-ownership-and-lazy-generation) and [PR 3](#provisional-pr-3--day-learning-and-quiz-ui). |
+| 5 — Quiz per Day | Day quiz tool saves and links quiz using the Day unit. | Learning Check UI still uses topic/task quiz service. | Day quiz tool tests; live Day quiz UI flow not validated. | [PR 3](#provisional-pr-3--day-learning-and-quiz-ui). |
+| 6 — PASS / FAIL validation | Day evaluation tool updates progress with PASS/FAIL. | UI evaluation still updates legacy tasks rather than invoking Day evaluation. | Day evaluation/store regression tests; live integrated Day submission unverified. | [PR 3](#provisional-pr-3--day-learning-and-quiz-ui). |
+| 7 — Upward progression | Store recomputes Week/Milestone/Phase/Roadmap status from stored children. | Roadmap planning still computes focus using tasks; aggregation only knows generated children, not the entire curriculum. | Store aggregation tests; full UI completion flow unverified. | [PR 4](#provisional-pr-4--progression-integration). |
+| 8 — Review Days | Tool appends a review Day without regenerating Week/Roadmap; artifact paths start empty. | No UI review action; review content/quiz must be generated separately. Original failed Day remains NEEDS_REVIEW, so passing its review alone does not clear Week status. | Review append/store tests; no end-to-end fail → review → completion validation. | [PR 2](#provisional-pr-2--day-content-ownership-and-lazy-generation), [PR 3](#provisional-pr-3--day-learning-and-quiz-ui), and [PR 4](#provisional-pr-4--progression-integration). |
+
+## Revised PR 1 — Planner entry and generated-plan selection
+
+**Scope approved for implementation:** one entry point in planner inputs offers “Start a new learning goal” / “Use an existing roadmap”. Saved roadmap dropdown shows readable titles with stable loader-compatible identifiers. Setup inputs remain available; reuse does not restore prior settings or resume lessons. Empty/unavailable selections block generation with guidance. Roadmaps tab remains browse-only and loses its activation button. Explicit generation selects the exact saved weekly plan from the inspected service contract (`result.plan_path`), while older plans remain selectable. Errors preserve the previous working preview and selection; missing selected plans are handled gracefully.
+
+**Acceptance criteria:** both routes work without widget-state errors; selected ID reaches generation; browsing is independent; new-goal route ignores old active/selected roadmap state; generation selects its returned saved plan; historical plans and later tabs remain usable; selection alone makes no generation calls or content writes.
+
+**Implementation status:** implemented in `app.py`, with focused regression coverage in `tests/test_planner_ui.py`.
+
+**Integration status:** uses the existing planner service unchanged. Its normalized `result.plan_path` covers direct (`plan_path`) and ReAct (`weekly_plan_path`) backends. IDs remove the `_roadmap.json` suffix expected by the loader. A new goal passes no explicit ID; the backend intentionally retains goal-derived roadmap reuse when a saved roadmap matches the goal, plus the existing explicit force-regeneration option. Old activation state is no longer consulted.
+
+**Validation status:** Streamlit AppTest checks routing, independent browsing, exact returned plan despite another file's newer mtime, historical selection, errors/no path/missing generated file, removed files, empty roadmaps, and later-tab rendering. Service tests check ID forwarding and normalized result paths for both modes. Validation command: `.venv/bin/python -m pytest -q` (56 passed, including 7 new cases); `git diff --check` and Python compilation also pass. No additional required check configuration or CI workflow exists in this checkout. Live provider generation and browser visual rendering are not verified by these tests.
+
+**Out of scope:** restoring settings; lesson resumption; preventing unnecessary generation; curriculum/prompt changes; critic repair; diagnostics; daily quiz integration; broader UI redesign. Only this PR is implemented. Follow-up proposals below are discussion placeholders, not approved implementation scopes or revised sprint acceptance criteria.
+
+## Provisional PR 2 — Day content ownership and lazy generation
+
+Discuss replacing eager week-level content with Day-owned content, including review inputs and when artifacts should be generated. Linked gaps: Sprints 4 and 8. No implementation in PR 1.
+
+## Provisional PR 3 — Day learning and quiz UI
+
+Discuss selecting a Day and connecting its unit, quiz, evaluation, and review actions to the existing Day tools. Linked gaps: Sprints 1, 4, 5, 6, and 8. No implementation in PR 1.
+
+## Provisional PR 4 — Progression integration
+
+Discuss making Day status the planning/UI source of truth, curriculum-aware completion, and resolution of failed Days through passed reviews. Linked gaps: Sprints 2, 3, 7, and 8. No implementation in PR 1.
+
+## Provisional PR 5 — Generation policy and quality
+
+Discuss unnecessary generation, prompt/curriculum policy, critic repair, diagnostics, and the guardrail/tool-boundary notes below. Linked gap: Sprint 1 wording policy and existing backlog notes. No implementation in PR 1.
+
+---
+
 # NEXT FIXES TO PLAN:
 ## Refactor guardrails, probably exclude all those guardrails midcode!! Instead use guardrail function next_required tasks, also review actually needed guardrails.
 ## clean up tool code:
