@@ -526,3 +526,68 @@ First make the system speak the correct language:
 Task
 → Day
 ```
+
+# NEXT FIXES TO PLAN:
+## Refactor guardrails, probably exclude all those guardrails midcode!! Instead use guardrail function next_required tasks, also review actually needed guardrails.
+## clean up tool code:
+Yes, that confusion is reasonable. You are not missing something.
+
+The issue is that `generate_weekly_plan` is a **tool wrapper**, but it delegates the actual LLM work to `generate_weekly_plan_and_learning_unit()` in `weekly_planner.py`. So when you search inside `tools.py`, it looks like `tool_generate_weekly_plan()` does not call the LLM, even though behaviorally that tool absolutely triggers LLM calls.
+
+Current shape:
+
+```text
+ReAct controller
+  -> tool_generate_weekly_plan()
+       -> generate_weekly_plan_and_learning_unit()
+            -> call_llm()  # weekly plan
+            -> call_llm()  # learning unit
+            -> call_llm()  # optional retry
+```
+
+So the code is not wrong, but the boundaries are muddy.
+
+A cleaner design would make this easier to reason about:
+
+```text
+tools.py
+  tool_generate_learning_roadmap()
+  tool_generate_weekly_plan()
+  tool_generate_learning_unit()
+  tool_run_plan_critic()
+
+llm_gateway.py
+  call_llm()
+
+weekly_planner.py
+  prompt builders
+  parsers
+  formatting
+  deterministic helpers
+```
+
+Or, at minimum, rename/split the delegated function:
+
+```text
+tool_generate_weekly_plan()
+  -> generate_weekly_plan_content_with_llm()
+  -> generate_week_learning_unit_with_llm()
+```
+
+The main smell is that `weekly_planner.py` currently mixes several responsibilities:
+
+- prompt construction
+- actual OpenAI calls
+- parsing/formatting
+- high-level orchestration
+- persistence/saving
+- some roadmap loading/generation logic
+
+That makes “where are the LLM calls?” harder to answer than it should be.
+
+For the ReAct path, I’d probably refactor toward one of these rules:
+
+- every ReAct tool that triggers an LLM should call an obvious `*_with_llm()` function directly, or
+- all LLM calls should live in one module, and tools should call named generation services from there.
+
+So your instinct is sound: searching `call_llm` technically finds the calls, but it does not clearly reveal the **tool-level behavior** because one tool hides its LLM calls behind a broad helper.

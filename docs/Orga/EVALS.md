@@ -569,117 +569,123 @@ As a result, a redesign discussion was initiated before continuing further evalu
 See:
 DESIGN_DECISIONS.md
 
-------------------------------------------------------------
-## Previous draft!!! se if still useful
-# Eval 1 - New User
+## Day-Centric Refactor Evals
 
-## Purpose
+## EVAL-003 — Fresh Day-Centric User
 
-Verify the system can create a complete learning experience for a new user.
+### Goal
+
+Validate the complete flow for a new user under the new day-centric architecture.
+
+### Initial State
+
+- Empty memory
+- Empty roadmaps
+- Empty learning_progress.json
+- Empty generated learning units
+- Empty quizzes
+- Empty weekly plans
+
+### Input
+
+Goal:
+Learn LLM Tool Calling Basics
+
+Time available per week (hours):
+5
+
+Max session length (minutes):
+60
+
+Use agent loop (multi-step) -> enabled
+
+Preferences / constraints
+Busy working mom. Prefer practical steps. Each task must fit in the max session time. Include deliverables and a LinkedIn draft.
+
+Learning intensity:
+medium
+
+### Expected Behavior
+
+1. Roadmap generated — yes
+2. Weekly plan generated — yes
+3. Plan uses Day 1, Day 2, etc. — yes (day-centric output)
+4. `data/learning_progress.json` created — yes
+5. Week object persisted in `learning_progress.json` — yes
+6. Day objects persisted under `weeks[].days[]` — yes
+7. No quiz generated yet — no `quiz_path` populated
+8. No review days generated — all days have `is_review = false`
+9. Every generated day has status=TODO -> yes
+10. `tasks.csv` may exist for compatibility, but must not be treated as source of truth
+
+
+# EVAL-004 — Day Learning Unit Generation
+
+## Goal
+
+Validate that a Learning Unit can be generated for a specific Day and linked back to that Day in `learning_progress.json`.
+
+## Initial State
+
+- EVAL-003 completed
+- `data/learning_progress.json` exists
+- At least one Week exists
+- At least one Day exists with:
+  - `status = TODO`
+  - empty `learning_unit_path`
+  - empty `quiz_path`
 
 ## Input
 
-Goal:
-Become AI Engineer
+Selected Day:
+`day_001`
 
-Time:
-5h/week
+Action:
+Generate Learning Unit for selected Day.
 
-## Expected
+## Expected Behavior
 
-* Roadmap generated
-* Weekly plan generated
-* Tasks generated
-* Learning unit generated
+1. System loads `data/learning_progress.json`.
+2. System finds `day_001`.
+3. Learning Unit is generated for `day_001` topic.
+4. Learning Unit is saved under `docs/learning_units/`.
+5. `day_001.learning_unit_path` is updated.
+6. Other Days remain unchanged.
+7. No quiz is generated.
+8. Day status remains `TODO`.
+9. Week/Roadmap status remains unchanged.
 
-## Actual
 
-NOT RUN
+# EVAL-004 — Learning Unit Alignment After Week Generation
 
-## Result
+## Goal
 
-NOT RUN
-
-## Observations
-
-*
-
-## Action Items
-
-*
-
----
-
-# Eval 2 - Returning User
-
-## Purpose
-
-Verify the system continues an existing roadmap instead of starting over.
-
-## Input
-
-Goal:
-Become AI Engineer
-
-Context:
-Existing roadmap and tasks
+Validate how the automatically generated Learning Unit relates to the new Day-centric model.
 
 ## Expected
 
-* Existing roadmap reused
-* Progress respected
-* Weekly plan continues current milestone
+- Learning Unit generated
+- Linked to Day
+- Stored in learning_progress.json
 
-## Actual
+## Observed
 
-NOT RUN
+- Learning Unit generated automatically
+- Covers the entire week
+- Not linked to a specific Day
 
-## Result
+## Checks
 
-NOT RUN
-
-## Observations
-
-*
-
-## Action Items
-
-*
-
----
-
-# Eval 3 - Failed Quiz
-
-## Purpose
-
-Verify quiz results influence future planning.
-
-## Input
-
-Goal:
-Become AI Engineer
-
-Context:
-Weak performance on embeddings quiz
-
-## Expected
-
-* Embeddings identified as weak topic
-* Weekly plan reinforces embeddings
-* Roadmap progression adapts
-
-## Actual
-
-NOT RUN
+1. Is a Learning Unit file generated? Yes
+2. Is `learning_unit_path` stored anywhere in `learning_progress.json`? No, path is empty
+3. Is it stored at Week level or Day level? At day level in `learning_progress.json`
+4. Do individual Days have empty or populated `learning_unit_path`? empty
+5. Does the content match the whole Week or one specific Day? The whole week (milestone/week related)
 
 ## Result
 
-NOT RUN
+**Status:** PARTIAL
 
-## Observations
-
-*
-
-## Action Items
-
-*
+**Reason:**
+The generated Learning Unit is week/milestone-level, not Day-level.
+The current implementation does not yet satisfy the target Day → Learning Unit relationship from the day-centric architecture.
