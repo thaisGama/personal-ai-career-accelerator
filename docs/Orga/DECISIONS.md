@@ -1349,3 +1349,32 @@ This approach provides several advantages:
 * Keeps review generation localized.
 * Prevents changes to already approved learning plans.
 * Enables adaptive teaching through memory while maintaining deterministic progression.
+
+
+## DD-012 — Learning Unit Ownership
+
+Something like:
+
+Learning Units belong to Days, not Weeks.
+
+Rationale:
+
+Day is the smallest execution unit.
+Quiz validates a Day.
+Review Days should have their own Learning Units.
+Progression is Day-centric.
+
+## DD-013 — Lazy Content Generation
+
+Something like:
+
+Learning content is generated on demand, not eagerly.
+
+Rationale:
+
+Reduces token usage.
+Keeps learner focused.
+Allows adaptation based on previous performance.
+Avoids generating content that may never be consumed.
+
+Those are architectural decisions, not implementation details.

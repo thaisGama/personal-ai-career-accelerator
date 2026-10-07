@@ -66,8 +66,27 @@ def _list_files_sorted(directory: Path, pattern: str) -> list[Path]:
     return sorted(files, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
+def _saved_roadmaps(base_dir: Path) -> dict[str, str]:
+    """Use the filename IDs expected by the roadmap loader, not display titles."""
+    roadmaps = {}
+    for path in sorted((base_dir / "roadmaps").glob("*_roadmap.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("phases"), list) or not data["phases"]:
+            continue
+        roadmap_id = path.name.removesuffix("_roadmap.json")
+        title = data.get("topic") or data.get("title") or data.get("goal") or roadmap_id
+        roadmaps[roadmap_id] = f"{title} ({roadmap_id})"
+    return roadmaps
+
+
 def _format_mtime(path: Path) -> str:
-    return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    except OSError:
+        return "Unavailable"
 
 
 def _plan_markdown_for_display(markdown: str) -> str:
@@ -102,6 +121,30 @@ st.markdown(
 
 with st.sidebar:
     st.header("Generate Plan inputs")
+    planning_route = st.radio(
+        "Planning choice",
+        ["Start a new learning goal", "Use an existing roadmap"],
+        key="planner_route",
+    )
+    roadmap_id = None
+    saved_roadmaps = _saved_roadmaps(BASE_DIR)
+    if planning_route == "Use an existing roadmap":
+        if st.session_state.get("planner_saved_roadmap") not in saved_roadmaps:
+            st.session_state["planner_saved_roadmap"] = None
+        roadmap_id = st.selectbox(
+            "Saved roadmap",
+            list(saved_roadmaps),
+            index=None,
+            placeholder="Choose a saved roadmap",
+            format_func=saved_roadmaps.get,
+            key="planner_saved_roadmap",
+        )
+        st.caption(
+            "Reuses the roadmap with the setup inputs below; it does not yet restore "
+            "previous settings or resume a lesson."
+        )
+        if not saved_roadmaps:
+            st.info("No saved roadmaps available. Choose Start a new learning goal and generate a plan to create one.")
     offline_mode = st.toggle(
         "Offline / browse mode",
         value=st.session_state.get("offline_mode", False),
@@ -136,11 +179,6 @@ with st.sidebar:
         ),
         height=120,
         key="planner_preferences",
-    )
-    roadmap_id = st.text_input(
-        "Roadmap ID (optional)",
-        value=st.session_state.get("planner_roadmap_id", ""),
-        key="planner_roadmap_id",
     )
     force_regenerate_roadmap = st.checkbox(
         "Force regenerate learning roadmap",
@@ -190,7 +228,7 @@ with st.sidebar:
         "Generate plan",
         type="primary",
         use_container_width=True,
-        disabled=offline_mode,
+        disabled=offline_mode or (planning_route == "Use an existing roadmap" and roadmap_id not in saved_roadmaps),
     )
     clear = col2.button("Clear planner", use_container_width=True)
     st.caption("Generating will call the API.")
@@ -249,7 +287,7 @@ with st.sidebar:
 planner_tab, plans_tab, roadmaps_tab, quiz_tab, library_tab = st.tabs(
     ["Generate Plan", "View Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"]
 )
-# Manual test: open Weekly Plans/Roadmaps tabs, load items into Planner, verify no generation unless Generate clicked.
+# Roadmap browsing and planner selection are independent; generation requires a click.
 
 if clear:
     for key in [
@@ -260,40 +298,53 @@ if clear:
         st.session_state.pop(key, None)
     st.rerun()
 
+generation_succeeded = False
 if generate:
-    with st.spinner("Generating..."):
-        active_roadmap_id = st.session_state.get("active_roadmap_id") or ""
-        active_roadmap_path = st.session_state.get("active_roadmap_path") or ""
-        effective_roadmap_id = roadmap_id or active_roadmap_id
-        if not effective_roadmap_id and active_roadmap_path:
-            active_path = Path(active_roadmap_path)
-            if active_path.exists():
-                effective_roadmap_id = active_path.stem
+    try:
+        if planning_route == "Use an existing roadmap":
+            if roadmap_id not in _saved_roadmaps(BASE_DIR):
+                raise ValueError("The selected roadmap is no longer available. Choose a saved roadmap again.")
+        with st.spinner("Generating..."):
+            mock_path = Path(mock_actions_path) if use_agent_loop and use_mock_actions else None
+            service_output = run_weekly_planner_service(
+                goal=goal,
+                hours_per_week=hours_per_week,
+                max_session_minutes=max_session_minutes,
+                preferences_text=preferences,
+                intensity=learning_intensity,
+                background=background,
+                roadmap_id=roadmap_id,
+                force_regenerate_roadmap=force_regenerate_roadmap,
+                model=planner_model,
+                use_agent_loop=use_agent_loop,
+                mock_actions_path=mock_path,
+                enable_critic=enable_critic,
+                base_dir=BASE_DIR,
+            )
+            result = service_output.get("result", {})
+            # The service normalizes both planner modes to result["plan_path"].
+            saved_plan = result.get("plan_path")
+            if not saved_plan:
+                reason = result.get("final_reason")
+                detail = f" (reason: {reason})" if reason else ""
+                trace = result.get("trace_path")
+                guidance = f"Check the planner trace at {trace} and try again." if trace else "Check the planner trace and try again."
+                raise ValueError(result.get("error") or f"Planner returned no saved weekly plan{detail}. {guidance}")
+            saved_plan_path = Path(saved_plan)
+            if not saved_plan_path.is_absolute():
+                saved_plan_path = BASE_DIR / saved_plan_path
+            saved_plan_path = saved_plan_path.resolve()
+            if not saved_plan_path.is_file():
+                raise ValueError(f"The generated weekly plan file is missing: {saved_plan_path}")
 
-        effective_mock_path = mock_actions_path if use_agent_loop and use_mock_actions else None
-        mock_path = Path(effective_mock_path) if effective_mock_path else None
-        service_output = run_weekly_planner_service(
-            goal=goal,
-            hours_per_week=hours_per_week,
-            max_session_minutes=max_session_minutes,
-            preferences_text=preferences,
-            intensity=learning_intensity,
-            background=background,
-            roadmap_id=effective_roadmap_id,
-            force_regenerate_roadmap=force_regenerate_roadmap,
-            model=planner_model,
-            use_agent_loop=use_agent_loop,
-            mock_actions_path=mock_path,
-            enable_critic=enable_critic,
-            base_dir=BASE_DIR,
-        )
-        result = service_output.get("result", {})
-        plan_md = service_output.get("plan_md", "")
-        linkedin_md = service_output.get("linkedin_md", "")
-
-    st.session_state["planner_result"] = result
-    st.session_state["planner_plan_md"] = plan_md
-    st.session_state["planner_linkedin_md"] = linkedin_md
+        st.session_state["planner_result"] = result
+        st.session_state["planner_plan_md"] = service_output.get("plan_md", "")
+        st.session_state["planner_linkedin_md"] = service_output.get("linkedin_md", "")
+        # Update before View Plans instantiates its widget on this run.
+        st.session_state["weekly_plans_select"] = saved_plan_path
+        generation_succeeded = True
+    except Exception as exc:
+        st.error(f"Failed to generate plan: {exc}")
 
 with planner_tab:
     st.markdown("## Generate Plan")
@@ -320,7 +371,10 @@ with planner_tab:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         result = st.session_state.get("planner_result")
         if result:
-            st.success("Saved")
+            if generation_succeeded:
+                st.success("Saved")
+            else:
+                st.caption("Previously saved outputs")
             st.write(f"**Plan:** `{result.get('plan_path')}`")
             st.write(f"**LinkedIn:** `{result.get('linkedin_path')}`")
             if result.get("learning_unit_path"):
@@ -463,22 +517,23 @@ with plans_tab:
     elif not plans:
         st.info("No weekly plans found.")
     else:
-        selected_path_str = st.session_state.get("weekly_plans_selected_path")
-        selected_path = Path(selected_path_str) if selected_path_str else None
-        options = plans
-        selected_index = 0
-        if selected_path and selected_path in options:
-            selected_index = options.index(selected_path)
+        if st.session_state.get("weekly_plans_select") not in plans:
+            if st.session_state.get("weekly_plans_select") is not None:
+                st.warning("The previously selected weekly plan is no longer available. Choose another saved plan.")
+            st.session_state["weekly_plans_select"] = plans[0]
+        plan_labels = {path: f"{_format_mtime(path)} — {path.name}" for path in plans}
         plan_path = st.selectbox(
             "Choose a weekly plan",
-            options,
-            index=selected_index,
-            format_func=lambda path: f"{_format_mtime(path)} — {path.name}",
+            plans,
+            format_func=lambda path, labels=plan_labels: labels.get(path, path.name),
             key="weekly_plans_select",
         )
-        st.session_state["weekly_plans_selected_path"] = plan_path.as_posix()
-        plan_md = plan_path.read_text(encoding="utf-8")
-        st.caption(f"{plan_path.as_posix()} | modified {_format_mtime(plan_path)}")
+        try:
+            plan_md = plan_path.read_text(encoding="utf-8")
+            st.caption(f"{plan_path.as_posix()} | modified {_format_mtime(plan_path)}")
+        except OSError as exc:
+            st.warning(f"Could not read the selected weekly plan: {exc}")
+            plan_md = ""
         st.markdown(_plan_markdown_for_display(plan_md))
         if st.button("Load into Planner Preview", key="load_plan_into_preview"):
             st.session_state["planner_plan_md"] = plan_md
@@ -501,11 +556,12 @@ with roadmaps_tab:
         selected_index = 0
         if selected_path and selected_path in options:
             selected_index = options.index(selected_path)
+        roadmap_labels = {path: f"{_format_mtime(path)} — {path.name}" for path in options}
         roadmap_path = st.selectbox(
             "Choose a roadmap",
             options,
             index=selected_index,
-            format_func=lambda path: f"{_format_mtime(path)} — {path.name}",
+            format_func=lambda path, labels=roadmap_labels: labels.get(path, path.name),
             key="roadmaps_select",
         )
         st.session_state["roadmaps_selected_path"] = roadmap_path.as_posix()
@@ -554,12 +610,6 @@ with roadmaps_tab:
                         st.caption("No milestones listed for this phase.")
             else:
                 st.caption("No phases found in this roadmap.")
-
-            if st.button("Set as active roadmap", key="set_active_roadmap"):
-                st.session_state["active_roadmap_path"] = roadmap_path.as_posix()
-                st.session_state["active_roadmap_id"] = roadmap_path.stem
-                st.session_state["planner_roadmap_id"] = roadmap_path.stem
-                st.success("Active roadmap set.")
 
             with st.expander("Raw JSON"):
                 st.json(data)
