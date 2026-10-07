@@ -6,6 +6,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from src.agent.learner_setup import load_learner_setup
 import src.agent.learning_check as learning_check
 from src.agent.tools import (
     tool_mark_done,
@@ -140,8 +141,7 @@ with st.sidebar:
             key="planner_saved_roadmap",
         )
         st.caption(
-            "Reuses the roadmap with the setup inputs below; it does not yet restore "
-            "previous settings or resume a lesson."
+            "Restores this roadmap’s saved setup as read-only. This does not resume a lesson."
         )
         if not saved_roadmaps:
             st.info("No saved roadmaps available. Choose Start a new learning goal and generate a plan to create one.")
@@ -152,50 +152,63 @@ with st.sidebar:
     )
     if offline_mode:
         st.info("Offline mode enabled. Browse plans/roadmaps; generation is disabled.")
-    goal = st.text_input(
-        "Goal / focus",
-        value=st.session_state.get(
-            "planner_goal",
-            "Learn embeddings + implement vector search memory (practical)",
-        ),
-        key="planner_goal",
+    existing_mode = planning_route == "Use an existing roadmap"
+    setup_error = None
+    field_keys = {
+        "goal": "planner_goal", "background": "planner_background",
+        "preferences": "planner_preferences", "hours_per_week": "planner_hours",
+        "max_session_minutes": "planner_max_session", "learning_intensity": "planner_intensity",
+    }
+    defaults = dict(
+        goal="Learn embeddings + implement vector search memory (practical)",
+        background="", preferences="Busy working mom. Prefer practical steps. Each task must fit in the max session time. Include deliverables and a LinkedIn draft.",
+        hours_per_week=2.0, max_session_minutes=30, learning_intensity="medium",
     )
+    new_inputs = st.session_state.setdefault("new_goal_inputs", defaults.copy())
+    if st.session_state.get("previous_planning_route", "Start a new learning goal") == "Start a new learning goal":
+        for field, key in field_keys.items():
+            if key in st.session_state:
+                new_inputs[field] = st.session_state[key]
+    if existing_mode:
+        inputs = dict(goal="", background="", preferences="", hours_per_week=0.5,
+                      max_session_minutes=30, learning_intensity="medium")
+        if roadmap_id:
+            try:
+                inputs = load_learner_setup(BASE_DIR, roadmap_id)
+            except ValueError as exc:
+                setup_error = str(exc)
+                st.error(setup_error)
+        field_keys = {field: "existing_" + key for field, key in field_keys.items()}
+    else:
+        inputs = new_inputs
+    # Write keys before creating widgets; separate namespaces preserve the new-goal draft.
+    for field, key in field_keys.items():
+        st.session_state[key] = inputs[field]
+    st.session_state["previous_planning_route"] = planning_route
+    goal = st.text_input("Goal / focus", key=field_keys["goal"], disabled=existing_mode)
     hours_per_week = st.slider(
-        "Time available per week (hours)",
-        0.5,
-        10.0,
-        st.session_state.get("planner_hours", 2.0),
-        0.5,
-        key="planner_hours",
+        "Time available per week (hours)", 0.5, 10.0, step=0.5,
+        key=field_keys["hours_per_week"], disabled=existing_mode,
     )
     max_session_minutes = st.selectbox(
-        "Max session length (minutes)", [10, 15, 20, 30, 45, 60], index=3, key="planner_max_session"
+        "Max session length (minutes)", [10, 15, 20, 30, 45, 60],
+        key=field_keys["max_session_minutes"], disabled=existing_mode,
     )
     preferences = st.text_area(
-        "Preferences / constraints",
-        value=st.session_state.get(
-            "planner_preferences",
-            "Busy working mom. Prefer practical steps. Each task must fit in the max session time. Include deliverables and a LinkedIn draft.",
-        ),
-        height=120,
-        key="planner_preferences",
+        "Preferences / constraints", height=120, key=field_keys["preferences"], disabled=existing_mode,
     )
     force_regenerate_roadmap = st.checkbox(
-        "Force regenerate learning roadmap",
-        value=st.session_state.get("force_regenerate_roadmap", False),
-        key="force_regenerate_roadmap",
+        "Force regenerate learning roadmap", key="force_regenerate_roadmap", disabled=existing_mode,
     )
+    if existing_mode:
+        force_regenerate_roadmap = False
     learning_intensity = st.selectbox(
-        "Learning intensity",
-        ["light", "medium", "hardcore"],
-        index=["light", "medium", "hardcore"].index(st.session_state.get("planner_intensity", "medium")),
-        key="planner_intensity",
+        "Learning intensity", ["light", "medium", "hardcore"],
+        key=field_keys["learning_intensity"], disabled=existing_mode,
     )
     background = st.text_area(
-        "Background / constraints (optional)",
-        value=st.session_state.get("planner_background", ""),
-        height=80,
-        key="planner_background",
+        "Background / constraints (optional)", height=80,
+        key=field_keys["background"], disabled=existing_mode,
     )
     planner_model = st.text_input(
         "Model", value=getattr(weekly_planner, "DEFAULT_MODEL", "gpt-4.1-mini"), key="planner_model"
@@ -228,7 +241,7 @@ with st.sidebar:
         "Generate plan",
         type="primary",
         use_container_width=True,
-        disabled=offline_mode or (planning_route == "Use an existing roadmap" and roadmap_id not in saved_roadmaps),
+        disabled=offline_mode or bool(setup_error) or (existing_mode and roadmap_id not in saved_roadmaps),
     )
     clear = col2.button("Clear planner", use_container_width=True)
     st.caption("Generating will call the API.")

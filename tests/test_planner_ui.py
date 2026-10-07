@@ -11,6 +11,7 @@ pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest
 from src.core.services import planner_service
 from src.agent import tools
+from src.agent.learner_setup import make_learner_setup
 
 APP = Path(__file__).resolve().parents[1] / "app.py"
 REAL_PLANNER_SERVICE = planner_service.run_weekly_planner_service
@@ -25,7 +26,7 @@ def ui(tmp_path, monkeypatch):
     roadmaps = tmp_path / "roadmaps"
     roadmaps.mkdir()
     for identifier, title in [("alpha", "Alpha learning"), ("beta", "Beta learning")]:
-        (roadmaps / f"{identifier}_roadmap.json").write_text(json.dumps({"topic": title, "phases": [{"title": "Basics"}]}))
+        (roadmaps / f"{identifier}_roadmap.json").write_text(json.dumps({"topic": title, "phases": [{"title": "Basics"}], "learner_setup": make_learner_setup(goal=title, background="", preferences="", hours_per_week=2.0, max_session_minutes=30, learning_intensity="medium")}))
     plans = tmp_path / "weekly_plans"
     plans.mkdir()
     old = plans / "old.md"
@@ -203,6 +204,12 @@ def test_service_contract_normalizes_path_and_passes_roadmap(tmp_path, monkeypat
     path = tmp_path / "weekly_plans" / "exact.md"
     path.parent.mkdir()
     path.write_text("# Exact saved plan")
+    roadmaps = tmp_path / "roadmaps"
+    roadmaps.mkdir()
+    (roadmaps / "alpha_roadmap.json").write_text(json.dumps({"learner_setup": make_learner_setup(
+        goal="Goal", background="", preferences="Practical", hours_per_week=2,
+        max_session_minutes=30, learning_intensity="medium",
+    )}))
     calls = []
 
     def backend(**kwargs):
@@ -219,3 +226,165 @@ def test_service_contract_normalizes_path_and_passes_roadmap(tmp_path, monkeypat
     )
     assert output["result"]["plan_path"] == str(path)
     assert (calls[0]["preferences"]["roadmap_id"] if agent else calls[0]["roadmap_id"]) == "alpha"
+
+
+def test_saved_setup_restores_in_fresh_session_and_roadmaps_stay_separate(ui):
+    at, calls, root = ui
+    setups = {
+        "alpha": make_learner_setup(goal="Goal A", background="Background A", preferences="Preferences A",
+                                   hours_per_week=3.5, max_session_minutes=45, learning_intensity="hardcore"),
+        "beta": make_learner_setup(goal="Goal B", background="", preferences="",
+                                  hours_per_week=1.0, max_session_minutes=10, learning_intensity="light"),
+    }
+    for identifier, setup in setups.items():
+        path = root / "roadmaps" / f"{identifier}_roadmap.json"
+        data = json.loads(path.read_text())
+        data["learner_setup"] = setup
+        path.write_text(json.dumps(data))
+    progress = root / "data" / "learning_progress.json"
+    progress.parent.mkdir()
+    progress.write_text('{"roadmap_id":"untouched","weeks":[]}')
+    snapshot = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    # New Streamlit session: only disk persists, not the previous session state.
+    source = APP.read_text().replace('BASE_DIR = Path(__file__).resolve().parent', f'BASE_DIR = Path({str(root)!r})')
+    at = AppTest.from_string(source).run()
+    widget(at, "text_input", "Goal / focus").set_value("Editable draft").run()
+    widget(at, "text_area", "Background / constraints (optional)").set_value("Draft background").run()
+    widget(at, "slider", "Time available per week (hours)").set_value(2.5).run()
+    at.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    for identifier in ("alpha", "beta", "alpha"):
+        at.selectbox(key="planner_saved_roadmap").set_value(identifier).run()
+        assert not at.exception
+        setup = setups[identifier]
+        for kind, label, field in (
+            ("text_input", "Goal / focus", "goal"),
+            ("text_area", "Background / constraints (optional)", "background"),
+            ("text_area", "Preferences / constraints", "preferences"),
+            ("slider", "Time available per week (hours)", "hours_per_week"),
+            ("selectbox", "Max session length (minutes)", "max_session_minutes"),
+            ("selectbox", "Learning intensity", "learning_intensity"),
+        ):
+            item = widget(at, kind, label)
+            assert item.value == setup[field]
+            assert item.disabled
+        at.run()
+        assert not at.exception
+    assert calls == []
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == snapshot
+    widget(at, "button", "Generate plan").click().run()
+    assert calls[-1]["goal"] == "Goal A"
+    assert calls[-1]["background"] == "Background A"
+    assert calls[-1]["preferences_text"] == "Preferences A"
+    assert calls[-1]["hours_per_week"] == 3.5
+    assert calls[-1]["max_session_minutes"] == 45
+    assert calls[-1]["intensity"] == "hardcore"
+    assert calls[-1]["roadmap_id"] == "alpha"
+    assert not calls[-1]["force_regenerate_roadmap"]
+    at.radio(key="planner_route").set_value("Start a new learning goal").run()
+    assert widget(at, "text_input", "Goal / focus").value == "Editable draft"
+    assert widget(at, "text_area", "Background / constraints (optional)").value == "Draft background"
+    assert widget(at, "slider", "Time available per week (hours)").value == 2.5
+    for kind, label in (("text_input", "Goal / focus"), ("text_area", "Background / constraints (optional)"),
+                        ("text_area", "Preferences / constraints"), ("slider", "Time available per week (hours)"),
+                        ("selectbox", "Max session length (minutes)"), ("selectbox", "Learning intensity")):
+        assert not widget(at, kind, label).disabled
+    widget(at, "button", "Generate plan").click().run()
+    assert calls[-1]["roadmap_id"] is None
+    assert calls[-1]["goal"] == "Editable draft"
+    assert not at.exception
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"goal": "Incomplete"}, {
+    "goal": "Goal", "background": "", "preferences": "", "hours_per_week": 2,
+    "max_session_minutes": 30, "learning_intensity": "invalid",
+}])
+def test_invalid_saved_setup_blocks_ui_generation(ui, metadata):
+    at, calls, root = ui
+    path = root / "roadmaps" / "alpha_roadmap.json"
+    data = json.loads(path.read_text())
+    data["learner_setup"] = metadata
+    path.write_text(json.dumps(data))
+    original = path.read_bytes()
+    at.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    at.selectbox(key="planner_saved_roadmap").set_value("alpha").run()
+    assert not at.exception
+    assert any("learner_setup" in error.value for error in at.error)
+    assert widget(at, "button", "Generate plan").disabled
+    assert widget(at, "text_input", "Goal / focus").disabled
+    at.run()
+    assert calls == []
+    assert path.read_bytes() == original
+
+
+def test_metadata_save_failure_ui_does_not_announce_success(ui, monkeypatch):
+    from test_roadmap_learner_setup import CURRICULUM
+    at, calls, root = ui
+    widget(at, "button", "Generate plan").click().run()
+    previous = at.session_state["planner_result"]
+    monkeypatch.setattr(planner_service, "run_weekly_planner_service", REAL_PLANNER_SERVICE)
+    monkeypatch.setattr(tools, "call_llm", lambda **kw: json.dumps(CURRICULUM))
+
+    def backend(**kw):
+        return tools.tool_generate_learning_roadmap(
+            goal=kw["goal"], background=kw["background"], target_level=kw["target_level"],
+            roadmap_id=kw["roadmap_id"], base_dir=kw["base_dir"], model=kw["model"], learner_setup=kw["learner_setup"],
+        )
+
+    monkeypatch.setattr(planner_service.weekly_planner, "generate_and_save_week", backend)
+    write = Path.write_text
+
+    def fail(path, *args, **kw):
+        if path.parent == root / "roadmaps" and path.suffix == ".json":
+            raise OSError("Simulated metadata disk failure")
+        return write(path, *args, **kw)
+
+    monkeypatch.setattr(Path, "write_text", fail)
+    widget(at, "button", "Generate plan").click().run()
+    assert not at.exception
+    assert any("Failed to save roadmap with required learner_setup" in error.value for error in at.error)
+    assert not at.success
+    assert at.session_state["planner_result"] == previous
+    assert at.selectbox(key="weekly_plans_select").value == root / "weekly_plans" / "generated.md"
+
+
+def test_new_goal_ui_persists_submitted_setup_and_fresh_session_restores(ui, monkeypatch):
+    from test_roadmap_learner_setup import CURRICULUM
+    at, calls, root = ui
+    submitted = make_learner_setup(goal="Distinct UI goal", background="UI background", preferences="UI constraints",
+                                   hours_per_week=4.5, max_session_minutes=60, learning_intensity="hardcore")
+    monkeypatch.setattr(planner_service, "run_weekly_planner_service", REAL_PLANNER_SERVICE)
+    monkeypatch.setattr(tools, "call_llm", lambda **kw: json.dumps(CURRICULUM))
+
+    def backend(**kw):
+        roadmap = tools.tool_generate_learning_roadmap(
+            goal=kw["goal"], background=kw["background"], target_level=kw["target_level"],
+            roadmap_id=kw["roadmap_id"], base_dir=kw["base_dir"], model=kw["model"], learner_setup=kw["learner_setup"],
+        )
+        plan = root / "weekly_plans" / "fresh.md"
+        plan.write_text("# Fresh UI plan")
+        return {"plan_path": plan, "roadmap_path": roadmap["path"], "raw_markdown": "# Fresh UI plan"}
+
+    monkeypatch.setattr(planner_service.weekly_planner, "generate_and_save_week", backend)
+    widget(at, "text_input", "Goal / focus").set_value(submitted["goal"])
+    widget(at, "text_area", "Background / constraints (optional)").set_value(submitted["background"])
+    widget(at, "text_area", "Preferences / constraints").set_value(submitted["preferences"])
+    widget(at, "slider", "Time available per week (hours)").set_value(submitted["hours_per_week"])
+    widget(at, "selectbox", "Max session length (minutes)").set_value(submitted["max_session_minutes"])
+    widget(at, "selectbox", "Learning intensity").set_value(submitted["learning_intensity"])
+    widget(at, "button", "Generate plan").click().run()
+    assert not at.exception and not at.error
+    assert any(msg.value == "Saved" for msg in at.success)
+    path = root / "roadmaps" / "distinct_ui_goal_roadmap.json"
+    assert json.loads(path.read_text())["learner_setup"] == submitted
+    original = path.read_bytes()
+    source = APP.read_text().replace('BASE_DIR = Path(__file__).resolve().parent', f'BASE_DIR = Path({str(root)!r})')
+    restarted = AppTest.from_string(source).run()
+    restarted.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    restarted.selectbox(key="planner_saved_roadmap").set_value("distinct_ui_goal").run()
+    assert not restarted.exception and not restarted.error
+    for key, field in (("existing_planner_goal", "goal"), ("existing_planner_background", "background"),
+                       ("existing_planner_preferences", "preferences"), ("existing_planner_hours", "hours_per_week"),
+                       ("existing_planner_max_session", "max_session_minutes"), ("existing_planner_intensity", "learning_intensity")):
+        assert restarted.session_state[key] == submitted[field]
+    assert widget(restarted, "text_input", "Goal / focus").disabled
+    assert path.read_bytes() == original

@@ -536,11 +536,11 @@ This audit checks the current repository rather than treating the sprint descrip
 | 1 — Days in planner output | Day prompts and parsing implemented; legacy task compatibility remains. | Both planner modes append day-centric progress, but tasks still participate in orchestration and quiz UI. | Parser tests and EVAL-003 cover Day output; live LLM wording is not guaranteed by deterministic tests. | [PR 3](#provisional-pr-3--day-learning-and-quiz-ui) for day-centric interaction; [PR 5](#provisional-pr-5--generation-policy-and-quality) for output policy. |
 | 2 — Progress store | Create/load/append implemented in `learning_progress_store.py`. | Both generation paths persist progress; `tasks.csv` remains part of planning and quiz flows. | Persistence tests; EVAL-003 records stored Weeks/Days. | [PR 4](#provisional-pr-4--progression-integration) for source-of-truth integration. |
 | 3 — Weeks with Days | Week/Day extraction and ownership metadata implemented. | Wired into direct planner and ReAct save outputs; legacy tasks still written. | Week parsing/ownership tests; EVAL-003 records generated Days. | [PR 4](#provisional-pr-4--progression-integration) for task-independent progression/planning. |
-| 4 — Learning Unit per Day | `tool_generate_learning_unit_for_day` saves and links a Day artifact. | Planner still eagerly generates a whole-week unit; UI lacks Day learning-unit action. | Focused tool test passes; recorded learning-unit alignment evaluation is PARTIAL. | [PR 2](#provisional-pr-2--day-content-ownership-and-lazy-generation) and [PR 3](#provisional-pr-3--day-learning-and-quiz-ui). |
+| 4 — Learning Unit per Day | `tool_generate_learning_unit_for_day` saves and links a Day artifact. | Planner still eagerly generates a whole-week unit; UI lacks Day learning-unit action. | Focused tool test passes; recorded learning-unit alignment evaluation is PARTIAL. | [deferred Day-content proposal](#deferred-proposal--day-content-ownership-and-lazy-generation) and [PR 3](#provisional-pr-3--day-learning-and-quiz-ui). |
 | 5 — Quiz per Day | Day quiz tool saves and links quiz using the Day unit. | Learning Check UI still uses topic/task quiz service. | Day quiz tool tests; live Day quiz UI flow not validated. | [PR 3](#provisional-pr-3--day-learning-and-quiz-ui). |
 | 6 — PASS / FAIL validation | Day evaluation tool updates progress with PASS/FAIL. | UI evaluation still updates legacy tasks rather than invoking Day evaluation. | Day evaluation/store regression tests; live integrated Day submission unverified. | [PR 3](#provisional-pr-3--day-learning-and-quiz-ui). |
 | 7 — Upward progression | Store recomputes Week/Milestone/Phase/Roadmap status from stored children. | Roadmap planning still computes focus using tasks; aggregation only knows generated children, not the entire curriculum. | Store aggregation tests; full UI completion flow unverified. | [PR 4](#provisional-pr-4--progression-integration). |
-| 8 — Review Days | Tool appends a review Day without regenerating Week/Roadmap; artifact paths start empty. | No UI review action; review content/quiz must be generated separately. Original failed Day remains NEEDS_REVIEW, so passing its review alone does not clear Week status. | Review append/store tests; no end-to-end fail → review → completion validation. | [PR 2](#provisional-pr-2--day-content-ownership-and-lazy-generation), [PR 3](#provisional-pr-3--day-learning-and-quiz-ui), and [PR 4](#provisional-pr-4--progression-integration). |
+| 8 — Review Days | Tool appends a review Day without regenerating Week/Roadmap; artifact paths start empty. | No UI review action; review content/quiz must be generated separately. Original failed Day remains NEEDS_REVIEW, so passing its review alone does not clear Week status. | Review append/store tests; no end-to-end fail → review → completion validation. | [deferred Day-content proposal](#deferred-proposal--day-content-ownership-and-lazy-generation), [PR 3](#provisional-pr-3--day-learning-and-quiz-ui), and [PR 4](#provisional-pr-4--progression-integration). |
 
 ## Revised PR 1 — Planner entry and generated-plan selection
 
@@ -556,9 +556,29 @@ This audit checks the current repository rather than treating the sprint descrip
 
 **Out of scope:** restoring settings; lesson resumption; preventing unnecessary generation; curriculum/prompt changes; critic repair; diagnostics; daily quiz integration; broader UI redesign. Only this PR is implemented. Follow-up proposals below are discussion placeholders, not approved implementation scopes or revised sprint acceptance criteria.
 
-## Provisional PR 2 — Day content ownership and lazy generation
+## Agreed PR 2 — Embedded learner setup and read-only restoration
 
-Discuss replacing eager week-level content with Day-owned content, including review inputs and when artifacts should be generated. Linked gaps: Sprints 4 and 8. No implementation in PR 1.
+This agreed scope replaces the former provisional PR 2 numbering; the Day-content idea remains deferred below. PR 1 is merged. Its original scope/status above records that delivery, not the extensions authorized here.
+
+**Goal:** save each roadmap’s submitted learner setup in its JSON and restore it as read-only when selected, with a fresh start and no legacy support.
+
+**Scope:** application-owned `learner_setup` includes `goal`, `background`, `preferences`, `hours_per_week`, `max_session_minutes`, and `learning_intensity`. Validate model curriculum separately, attach exact submitted setup deterministically, validate the complete roadmap, and persist JSON plus its readable Markdown rendering through the shared roadmap-generation tool. Both direct and ReAct generation paths must provide the same metadata. Intentionally empty optional strings are valid.
+
+Existing-roadmap selection loads JSON, restores and locks the six fields, and uses separate widget keys from the editable new-goal draft. The service reloads saved metadata before generation so stale inputs cannot override it. Existing-roadmap force regeneration is disabled to preserve settings, curriculum, and identity. Selecting/rerunning does not generate or modify files/progress. Invalid/missing metadata errors block generation; persistence failures must surface without announcing success.
+
+**Fresh start:** user authorized removal of obsolete generated JSON/Markdown only from the application’s `roadmaps/` directory after backing up study files. Eight obsolete artifacts (four pairs) without setup were removed locally. They were ignored/untracked, so deletion does not appear as tracked file removal in this PR. Backups, other study artifacts, fixtures, source, and documentation are preserved. No migration, missing-setup defaults for saved roadmaps, or historical setup form is added.
+
+**Acceptance criteria:** exact submitted values persist in both generation routes; a fresh app session restores from disk; saved fields are disabled; switching A/B keeps settings separate; generation receives persisted settings; switching back restores editable new-goal inputs without another roadmap’s ID; empty optional fields work; invalid/incomplete metadata blocks generation with an error; selection/reruns preserve artifacts/progress; failed saves do not announce success; relevant PR 1 regressions pass.
+
+**Implementation/integration status:** implemented in shared roadmap validation/render/save, direct/ReAct input forwarding, planner service, and Streamlit input routing. Original sprint goals and acceptance criteria remain unchanged.
+
+**Validation status:** automated persistence and Streamlit AppTest coverage recorded in [EVAL-PR2-001](EVALS.md#eval-pr2-001--embedded-setup-and-read-only-restoration). No paid APIs used. Manual restart/browser verification remains pending.
+
+**Out of scope:** editing existing settings, legacy migration/compatibility, daily resume, lesson selection, curriculum policy, critic repair, roadmap-tab synchronization, general redesign, and resetting other learning data. Remaining PR scopes stay provisional.
+
+## Deferred proposal — Day content ownership and lazy generation
+
+Discuss replacing eager week-level content with Day-owned content, including review inputs and when artifacts should be generated. Linked gaps: Sprints 4 and 8. Former provisional PR 2; not implemented in the agreed learner-setup PR 2.
 
 ## Provisional PR 3 — Day learning and quiz UI
 

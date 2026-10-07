@@ -1378,3 +1378,21 @@ Allows adaptation based on previous performance.
 Avoids generating content that may never be consumed.
 
 Those are architectural decisions, not implementation details.
+
+---
+
+## DD-014 — Embedded Learner Setup and Locked Roadmap Settings
+
+**Date:** 2026-10-07
+
+**Decision:** roadmap JSON owns a complete `learner_setup` object containing the exact submitted `goal`, `background`, `preferences`, `hours_per_week`, `max_session_minutes`, and `learning_intensity`. No separate settings file is introduced. Markdown renders this metadata with the curriculum; it is not authoritative.
+
+Setup belongs to the application, not the model. Validate model curriculum independently, attach validated input metadata, validate the complete stored roadmap, then save. Both direct and ReAct roadmap generation use the shared persistence path. Empty background/preferences strings are valid; missing or invalid saved metadata is an error rather than a compatibility/defaulting workflow.
+
+Selecting an existing roadmap restores and locks setup. Weekly generation reloads that JSON at the service boundary, ignores unrelated submitted settings, and preserves its stable filename ID. Force-regeneration is unavailable for the existing-roadmap route. New-goal draft state is separate and remains editable when returning to that route. Selection is read-only and does not affect progress or trigger generation.
+
+**Fresh-start policy:** obsolete generated roadmap JSON/Markdown may be removed under the user’s explicit backup/deletion authorization; backups and all other study data are preserved. There is no legacy migration or historical settings form.
+
+**Failure behavior:** required metadata/Markdown save errors propagate to the UI, suppress success notices, and preserve the last working preview/selection. Saving still follows existing file-write conventions; this decision does not introduce a transaction across roadmap JSON, Markdown, tasks, and progress. A Markdown write failure may leave a complete setup-bearing JSON file, but the operation is reported as failed and planning does not continue.
+
+**Scope:** changing existing setup, curriculum, progression, daily resume, and roadmap-tab synchronization remain deferred. See the [agreed PR 2 scope](REFACTOR_PLAN.md#agreed-pr-2--embedded-learner-setup-and-read-only-restoration).

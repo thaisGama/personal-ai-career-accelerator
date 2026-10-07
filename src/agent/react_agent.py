@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .critic import run_plan_critic
+from .learner_setup import make_learner_setup
 from .learning_progress_store import append_week_from_plan, resolve_learning_progress_path
 from .memory.vector_store import LocalVectorStore
 from .tools import (
@@ -839,6 +840,8 @@ def run_weekly_planner_agent_react(
                 roadmap_id=state.get("roadmap_id") or None,
                 force_regenerate=state.get("force_regenerate_roadmap", False),
             )
+            if output.get("error"):
+                raise ValueError(output["error"])
             state["roadmap_attempted"] = True
             state["roadmap_exists"] = bool(output.get("exists") and output.get("roadmap"))
             state["roadmap"] = output.get("roadmap")
@@ -851,23 +854,23 @@ def run_weekly_planner_agent_react(
                 roadmap_id=state.get("roadmap_id") or None,
                 base_dir=base_path,
                 model=model,
+                learner_setup=preferences.get("learner_setup") or make_learner_setup(
+                    goal=goal, background=state.get("background") or "",
+                    preferences=preferences.get("text") or "", hours_per_week=hours_per_week,
+                    max_session_minutes=max_session_minutes, learning_intensity=state.get("target_level", "medium"),
+                ),
             )
+            if output.get("error"):
+                raise ValueError(output["error"])
             state["roadmap_attempted"] = True
             state["roadmap_generation_attempted"] = True
-            if output.get("error"):
-                state["roadmap_generation_error"] = output.get("error", "")
-                state["roadmap_generated"] = False
-                state["roadmap"] = None
-                state["roadmap_exists"] = False
-                state["roadmap_path"] = output.get("path", "")
-            else:
-                state["roadmap_generation_error"] = ""
-                state["roadmap_generated"] = True
-                state["roadmap"] = output.get("roadmap")
-                state["roadmap_exists"] = bool(state.get("roadmap"))
-                state["roadmap_path"] = output.get("path", "")
-                if output.get("roadmap_id"):
-                    state["roadmap_id"] = output.get("roadmap_id")
+            state["roadmap_generation_error"] = ""
+            state["roadmap_generated"] = True
+            state["roadmap"] = output.get("roadmap")
+            state["roadmap_exists"] = bool(state.get("roadmap"))
+            state["roadmap_path"] = output.get("path", "")
+            if output.get("roadmap_id"):
+                state["roadmap_id"] = output.get("roadmap_id")
         elif tool_name == "summarize_task_progress":
             tasks_path = Path(state.get("tasks_path"))
             output = tool_summarize_task_progress(tasks_path=tasks_path)
