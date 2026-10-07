@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+from src.agent.learner_setup import load_learner_setup, make_learner_setup
 import src.agent.react_agent as react_agent
 import src.agent.weekly_planner as weekly_planner
 
@@ -89,11 +90,26 @@ def run_weekly_planner_service(
     base_dir: Path,
 ) -> dict:
     """Run the weekly planner in agent or non-agent mode and return normalized outputs."""
+    if roadmap_id:
+        setup = load_learner_setup(base_dir, roadmap_id)
+        goal = setup["goal"]
+        background = setup["background"]
+        preferences_text = setup["preferences"]
+        hours_per_week = setup["hours_per_week"]
+        max_session_minutes = setup["max_session_minutes"]
+        intensity = setup["learning_intensity"]
+        force_regenerate_roadmap = False
+    setup = make_learner_setup(
+        goal=goal, background=background or "", preferences=preferences_text or "",
+        hours_per_week=hours_per_week, max_session_minutes=max_session_minutes,
+        learning_intensity=intensity or "medium",
+    )
     _ensure_data_dir(base_dir)
 
     if use_agent_loop:
         preferences_payload = {
             "text": preferences_text or "",
+            "learner_setup": setup,
             "target_level": intensity,
             "background": background or "",
             "roadmap_id": roadmap_id or "",
@@ -134,6 +150,7 @@ def run_weekly_planner_service(
         time_per_week_hours=hours_per_week,
         max_session_minutes=max_session_minutes,
         preferences=enriched_preferences,
+        learner_setup=setup,
         target_level=intensity,
         background=background,
         roadmap_id=roadmap_id or None,

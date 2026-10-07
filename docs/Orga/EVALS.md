@@ -740,3 +740,69 @@ No new manual browser observations were made during this evaluation. AppTest ver
 
 1. **Roadmaps tab remains on an old roadmap after new-goal generation.** User-reported observation; code inspection shows independent `roadmaps_select` / `roadmaps_selected_path` browsing state and no post-generation synchronization to the newly generated roadmap. Current mock tests do not generate roadmap files, so they do not reproduce this exact manual flow. Discuss a deliberate post-generation browsing-selection update separately while preserving independence from planner inputs. No fix here.
 2. **Narrow goals may produce excessively long curricula.** User-reported observation; no curriculum-length evaluation or live generation performed here. Evaluate goal-to-curriculum alignment, breadth, and duration in [provisional PR 5 — Generation policy and quality](REFACTOR_PLAN.md#provisional-pr-5--generation-policy-and-quality). No prompt or curriculum changes here.
+
+---
+
+## EVAL-PR2-001 — Embedded Setup and Read-only Restoration
+
+**Date:** 2026-10-07
+
+**Scope:** agreed PR 2, based on merged PR 1 (`master` commit `47f30fd`), on `feature/roadmap-learner-setup`.
+
+**Result:** PASS — automated checks and completed manual verification, confirmed by the user on 2026-10-07.
+
+### Setup and safety of automated verification
+
+Streamlit 1.52.1 AppTest runs the current application with `BASE_DIR` redirected to pytest temporary directories. Tests mock curriculum/weekly content and ReAct controller actions; persistence, service input handling, validation, and widget reruns run locally. An embedding tripwire in roadmap-route tests prevents accidental real embedding calls. No paid APIs are called for automated verification. Invalid-data tests mutate only temporary fixtures.
+
+PR 1 fixtures were updated to contain required setup rather than adding legacy defaults to production code. Original routing, browsing, exact saved-plan selection, failure/retry, missing-file, and empty-roadmap checks still pass.
+
+### Actual automated observations and test names
+
+| Behavior | Test | Observed result |
+| --- | --- | --- |
+| Normal and forced creation in direct and ReAct modes, with empty/nonempty optional strings | `test_generation_routes_persist_exact_application_setup` (8 cases) | Exact application values persisted, including whitespace/Unicode; model-authored setup overwritten; JSON validates and Markdown includes setup. Saved weekly plan exists. |
+| UI-submitted values persist; fresh app session restores from disk | `test_new_goal_ui_persists_submitted_setup_and_fresh_session_restores` | Six distinctive values stored by shared roadmap tool, reloaded in a new AppTest session, and locked without changing JSON. |
+| Fresh session, locked fields, A/B switching, generation inputs, editable draft restoration | `test_saved_setup_restores_in_fresh_session_and_roadmaps_stay_separate` | All six fields reflect each selected roadmap; existing generation receives its exact setup/ID; returning to new-goal mode restores the editable draft and passes no selected ID. Selection/reruns leave all fixture artifacts and progress bytes unchanged. |
+| Service ignores stale input values in both modes | `test_existing_service_uses_persisted_setup_and_preserves_roadmap` (2 cases) | Goal, background, preferences, time, intensity, and stable ID derive from disk; force regeneration suppressed; roadmap bytes unchanged. |
+| Complete schema validation, independent model curriculum validation, and empty optional fields | `test_curriculum_validation_is_separate_from_required_setup` | Model curriculum validates without learner metadata; stored roadmap without metadata fails validation; empty optional strings remain valid. |
+| Invalid field values | `test_setup_validation_rejects_invalid_values` (9 cases) | Invalid strings/types/time ranges, booleans, NaN, and intensity rejected with learner_setup errors. |
+| Incomplete saved setup prevents backend execution | `test_incomplete_setup_blocks_service_before_backend` (2 cases) | Service errors before direct/ReAct backend can run. |
+| Invalid/incomplete saved setup prevents UI generation | `test_invalid_saved_setup_blocks_ui_generation` (4 cases) | Useful metadata error, generation disabled, fields locked, no generation calls or JSON changes on reruns. |
+| JSON/Markdown persistence errors in both routes | `test_required_metadata_save_failure_propagates_without_plan` (4 cases) | Required-metadata save error propagates; no weekly plan or seeded tasks saved; no fallback planning continues. |
+| Metadata-saving failure in UI | `test_metadata_save_failure_ui_does_not_announce_success` | Error shown; no success notice; last successful result and exact selected plan retained. |
+
+### Commands and actual results
+
+- `.venv/bin/python -m pytest tests/test_planner_ui.py tests/test_roadmap_learner_setup.py -q`: **41 passed**.
+- `.venv/bin/python -m pytest -q`: **90 passed**.
+- `.venv/bin/python -m compileall -q app.py src tests`: passed.
+- Scoped `git diff --check` for this PR’s code, tests, and canonical docs: passed.
+- No further required CI/linter/check configuration exists in this checkout. The existing `FOUNDER_NOTEBOOK.md` changes are included in the final verification commit with explicit user authorization.
+
+### Authorized fresh start — local operation, not an automated test
+
+Removed eight obsolete generated roadmap artifacts (four JSON/Markdown pairs) directly from `roadmaps/`, after confirming each JSON had curriculum fields and lacked learner_setup:
+
+- `help_me_choose_among_opensearch_s3_vectors_aurora_postgresql_with_pgvector_and_dynamodb_for_a_rag_architecture_check_whether_each_is_suitable_for_vector_retrieval_roadmap.{json,md}`
+- `learn_aws_glue_roadmap.{json,md}`
+- `learn_how_to_write_sql_queries_using_group_by_and_having_to_summarize_monthly_sales_roadmap.{json,md}`
+- `learn_llm_tool_calling_basics_roadmap.{json,md}`
+
+These artifacts were ignored/untracked; Git does not represent their deletion in the PR. No backup directories, other study artifacts, source, documentation, or fixtures were deleted. No progress reset or migration was performed.
+
+### Completed manual verification
+
+**Result:** PASS. The user confirmed completion of all PR 2 manual checks on 2026-10-07. These are user-reported manual observations, separate from the automated results above:
+
+1. Created a fresh roadmap with distinctive goal, background, preferences, hours, maximum session length, and intensity — passed.
+2. Restarted the app and selected that roadmap via “Use an existing roadmap”; setup persisted after restart — passed.
+3. Verified the exact six setup values were restored and locked — passed.
+4. Switched to “Start a new learning goal” and verified the fields were editable — passed.
+5. Selected a second fresh roadmap and confirmed settings remained separate between roadmaps and the new-goal draft — passed.
+
+PR 2 manual UI and restart verification is complete; no checklist items remain pending.
+
+### Verification boundaries and implementation limits
+
+Automated verification used temporary fixtures and mocked content; the manual observations above were supplied by the user. Real disk exhaustion and concurrent external file edits were not induced by automated tests; write errors were injected at the persistence boundary. Existing write conventions are retained: JSON/Markdown are not a multi-file transaction, so a Markdown failure can leave a valid setup-bearing JSON file while the UI reports failure and planning stops. Same-goal reuse on the new-goal route remains the intentional existing backend behavior; the saved roadmap setup is not rewritten merely because a week is generated. Roadmap-tab synchronization, curriculum alignment/duration, and later PRs remain deferred.

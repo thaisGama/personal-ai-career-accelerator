@@ -120,6 +120,7 @@ Ideas NOT being worked on now:
 - cost optimization possibilities: use classical ML to classify request. If request is Q&A pertinent don't call expensive model!
 - use semantic search first for user query, if no match, only then call LLM!
 - If user failed a quiz, maybe the next week should explain the concept differently instead of repeating the same material. Not sure current memory system can support this. Potential future experiment.
+- How to handle existing roadmaps. Generally I think the idea is to keep re-using the roadmap/plans. But there are exceptions. During the learning process requirements from the user can change. For example I have more/less time to invest. And this would require an adaptation of an existing roadmap, instead of necessarily requiring a change in content. Think about how to handle those cases. For now my decision is to keep this frozen to simplify the current development process. (2026.10.07)
 
 # Next Milestone:
 

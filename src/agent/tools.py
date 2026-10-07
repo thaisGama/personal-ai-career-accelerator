@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
+from .learner_setup import validate_learner_setup
 from .memory.vector_store import LocalVectorStore
 from .weekly_planner import (
     DEFAULT_MODEL,
@@ -287,7 +288,7 @@ def _infer_roadmap_id(goal: str, roadmap_id: str | None, roadmap_path: str | Non
     return _slugify_goal(goal)
 
 
-def _validate_roadmap_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str]]:
+def _validate_curriculum_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str]]:
     errors: List[str] = []
 
     def _expect(condition: bool, message: str) -> None:
@@ -367,6 +368,15 @@ def _validate_roadmap_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str]]:
     return len(errors) == 0, errors
 
 
+def _validate_roadmap_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    valid, errors = _validate_curriculum_schema(roadmap)
+    try:
+        validate_learner_setup(roadmap.get("learner_setup") if isinstance(roadmap, dict) else None)
+    except ValueError as exc:
+        errors.append(str(exc))
+    return not errors, errors
+
+
 def _render_roadmap_markdown(roadmap: Dict[str, Any]) -> str:
     lines = []
     lines.append(f"# Global Learning Roadmap: {roadmap.get('topic', '')}")
@@ -378,6 +388,11 @@ def _render_roadmap_markdown(roadmap: Dict[str, Any]) -> str:
         "- Estimated weeks at 2/5/7 hrs per week: "
         f"{weeks.get('2', '?')} / {weeks.get('5', '?')} / {weeks.get('7', '?')}"
     )
+    lines.append("")
+    setup = validate_learner_setup(roadmap.get("learner_setup"))
+    lines.append("## Learner setup")
+    for field, value in setup.items():
+        lines.append(f"- {field}: {value}")
     lines.append("")
     prerequisites = roadmap.get("prerequisites") or []
     if prerequisites:
@@ -648,14 +663,14 @@ def tool_load_learning_roadmap(
     force_regenerate: bool = False,
 ) -> Dict[str, Any]:
     """Load a saved roadmap JSON if present."""
-    json_path, legacy_json_path, _ = _roadmap_paths(goal, base_dir, roadmap_id)
-    target_path = json_path if json_path.exists() else legacy_json_path
+    target_path, _, _ = _roadmap_paths(goal, base_dir, roadmap_id)
     if not target_path.exists():
         return {"exists": False}
     if force_regenerate:
         return {"exists": False, "path": target_path.as_posix(), "force_regenerate": True}
     try:
         roadmap = json.loads(target_path.read_text(encoding="utf-8"))
+        validate_learner_setup(roadmap.get("learner_setup"))
     except Exception as exc:
         return {"exists": True, "error": f"Failed to parse roadmap JSON: {exc}", "path": target_path.as_posix()}
     return {"exists": True, "roadmap": roadmap, "path": target_path.as_posix()}
@@ -668,10 +683,10 @@ def tool_generate_learning_roadmap(
     roadmap_id: str | None,
     base_dir: Path,
     model: str,
+    learner_setup: dict,
 ) -> Dict[str, Any]:
     """Generate and save a multi-week learning roadmap for the goal."""
-    if target_level not in {"light", "medium", "hardcore"}:
-        target_level = "medium"
+    learner_setup = validate_learner_setup(learner_setup)
     system_prompt = (
         "You are a senior curriculum designer for modern AI Engineers. Create a structured learning roadmap.\n"
         "Return ONLY strict JSON wrapped between the tags:\n"
@@ -757,14 +772,22 @@ def tool_generate_learning_roadmap(
     except json.JSONDecodeError as exc:
         return {"error": f"Failed to parse roadmap JSON: {exc}", "raw_output": raw_output}
 
-    valid, errors = _validate_roadmap_schema(roadmap)
+    valid, errors = _validate_curriculum_schema(roadmap)
     if not valid:
         return {"error": "Roadmap JSON failed schema validation.", "validation_errors": errors, "raw_output": raw_output}
 
+    # Override any model-supplied setup with validated application inputs.
+    roadmap["learner_setup"] = learner_setup
+    valid, errors = _validate_roadmap_schema(roadmap)
+    if not valid:
+        return {"error": "Roadmap metadata failed validation.", "validation_errors": errors}
     json_path, _, md_path = _roadmap_paths(goal, base_dir, roadmap_id)
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(roadmap, ensure_ascii=True, indent=2), encoding="utf-8")
-    md_path.write_text(_render_roadmap_markdown(roadmap), encoding="utf-8")
+    try:
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(json.dumps(roadmap, ensure_ascii=True, indent=2), encoding="utf-8")
+        md_path.write_text(_render_roadmap_markdown(roadmap), encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"Failed to save roadmap with required learner_setup: {exc}") from exc
 
     effective_id = _slugify_goal(roadmap_id) if roadmap_id else _slugify_goal(goal)
     seeded = _seed_roadmap_tasks(roadmap, base_dir, effective_id)

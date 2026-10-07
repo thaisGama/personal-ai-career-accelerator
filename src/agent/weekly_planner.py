@@ -962,10 +962,17 @@ def generate_and_save_week(
     background: str | None = None,
     roadmap_id: str | None = None,
     force_regenerate_roadmap: bool = False,
+    learner_setup: dict | None = None,
     model: str = DEFAULT_MODEL,
     base_dir: Path | str = ".",
 ) -> dict:
     """High-level orchestrator that builds prompts, calls the LLM, splits, and saves files."""
+    from .learner_setup import make_learner_setup
+    learner_setup = learner_setup or make_learner_setup(
+        goal=goal, background=background or "", preferences=preferences or "",
+        hours_per_week=time_per_week_hours, max_session_minutes=max_session_minutes,
+        learning_intensity=target_level or "medium",
+    )
     memory_path = Path(base_dir) / "docs" / "memory.md"
     memory_source = (Path(base_dir) / "data" / "memory_vectors.json").as_posix()
 
@@ -1002,10 +1009,35 @@ def generate_and_save_week(
     roadmap_path = ""
     roadmap = None
     effective_roadmap_id = ""
-    try:
-        from . import tools as tools_module
+    from . import tools as tools_module
 
-        if force_regenerate_roadmap:
+    if force_regenerate_roadmap:
+        roadmap_result = tools_module.tool_generate_learning_roadmap(
+            goal=goal,
+            target_level=target_level or "medium",
+            background=background,
+            roadmap_id=roadmap_id,
+            base_dir=Path(base_dir),
+            model=model,
+            learner_setup=learner_setup,
+        )
+        if roadmap_result.get("error"):
+            raise ValueError(roadmap_result["error"])
+        roadmap = roadmap_result.get("roadmap")
+        roadmap_path = roadmap_result.get("path", "")
+        effective_roadmap_id = roadmap_result.get("roadmap_id") or ""
+    else:
+        load_result = tools_module.tool_load_learning_roadmap(
+            goal=goal,
+            base_dir=Path(base_dir),
+            roadmap_id=roadmap_id,
+            force_regenerate=False,
+        )
+        if load_result.get("error"):
+            raise ValueError(load_result["error"])
+        roadmap = load_result.get("roadmap")
+        roadmap_path = load_result.get("path", "")
+        if not roadmap:
             roadmap_result = tools_module.tool_generate_learning_roadmap(
                 goal=goal,
                 target_level=target_level or "medium",
@@ -1013,33 +1045,13 @@ def generate_and_save_week(
                 roadmap_id=roadmap_id,
                 base_dir=Path(base_dir),
                 model=model,
+                learner_setup=learner_setup,
             )
+            if roadmap_result.get("error"):
+                raise ValueError(roadmap_result["error"])
             roadmap = roadmap_result.get("roadmap")
             roadmap_path = roadmap_result.get("path", "")
             effective_roadmap_id = roadmap_result.get("roadmap_id") or ""
-        else:
-            load_result = tools_module.tool_load_learning_roadmap(
-                goal=goal,
-                base_dir=Path(base_dir),
-                roadmap_id=roadmap_id,
-                force_regenerate=False,
-            )
-            roadmap = load_result.get("roadmap")
-            roadmap_path = load_result.get("path", "")
-            if not roadmap:
-                roadmap_result = tools_module.tool_generate_learning_roadmap(
-                    goal=goal,
-                    target_level=target_level or "medium",
-                    background=background,
-                    roadmap_id=roadmap_id,
-                    base_dir=Path(base_dir),
-                    model=model,
-                )
-                roadmap = roadmap_result.get("roadmap")
-                roadmap_path = roadmap_result.get("path", "")
-                effective_roadmap_id = roadmap_result.get("roadmap_id") or ""
-    except Exception:
-        roadmap = None
 
     if roadmap:
         effective_roadmap_id = effective_roadmap_id or tools_module._infer_roadmap_id(goal, roadmap_id, roadmap_path)
