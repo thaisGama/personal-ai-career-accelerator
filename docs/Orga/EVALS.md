@@ -749,7 +749,7 @@ No new manual browser observations were made during this evaluation. AppTest ver
 
 **Scope:** agreed PR 2, based on merged PR 1 (`master` commit `47f30fd`), on `feature/roadmap-learner-setup`.
 
-**Result:** PASS — automated checks. Manual browser/restart checklist remains pending.
+**Result:** PASS — automated checks and completed manual verification, confirmed by the user on 2026-10-07.
 
 ### Setup and safety of automated verification
 
@@ -778,7 +778,7 @@ PR 1 fixtures were updated to contain required setup rather than adding legacy d
 - `.venv/bin/python -m pytest -q`: **90 passed**.
 - `.venv/bin/python -m compileall -q app.py src tests`: passed.
 - Scoped `git diff --check` for this PR’s code, tests, and canonical docs: passed.
-- No further required CI/linter/check configuration exists in this checkout. Unrelated `FOUNDER_NOTEBOOK.md` edits are excluded and preserved.
+- No further required CI/linter/check configuration exists in this checkout. The existing `FOUNDER_NOTEBOOK.md` changes are included in the final verification commit with explicit user authorization.
 
 ### Authorized fresh start — local operation, not an automated test
 
@@ -791,14 +791,18 @@ Removed eight obsolete generated roadmap artifacts (four JSON/Markdown pairs) di
 
 These artifacts were ignored/untracked; Git does not represent their deletion in the PR. No backup directories, other study artifacts, source, documentation, or fixtures were deleted. No progress reset or migration was performed.
 
-### Manual check to perform
+### Completed manual verification
 
-1. Create a fresh roadmap with distinctive goal, background, preferences, hours, maximum session length, and intensity.
-2. Restart the app and select that roadmap via “Use an existing roadmap”.
-3. Verify the exact six setup values are restored and locked.
-4. Switch to “Start a new learning goal” and verify the fields are editable.
-5. Select a second fresh roadmap and confirm its settings remain separate from the first roadmap and the new-goal draft.
+**Result:** PASS. The user confirmed completion of all PR 2 manual checks on 2026-10-07. These are user-reported manual observations, separate from the automated results above:
 
-### Unverified behavior and limits
+1. Created a fresh roadmap with distinctive goal, background, preferences, hours, maximum session length, and intensity — passed.
+2. Restarted the app and selected that roadmap via “Use an existing roadmap”; setup persisted after restart — passed.
+3. Verified the exact six setup values were restored and locked — passed.
+4. Switched to “Start a new learning goal” and verified the fields were editable — passed.
+5. Selected a second fresh roadmap and confirmed settings remained separate between roadmaps and the new-goal draft — passed.
 
-No new manual browser observations or live provider generations were performed. A new AppTest session verifies disk restoration but does not substitute for a browser/process restart observation. Real disk exhaustion and concurrent external file edits were not induced. Tests inject write errors at the persistence boundary. Existing write conventions are retained: JSON/Markdown are not a multi-file transaction, so a Markdown failure can leave a valid setup-bearing JSON file while the UI reports failure and planning stops. Same-goal reuse on the new-goal route remains the intentional existing backend behavior; the saved roadmap setup is not rewritten merely because a week is generated. Roadmap-tab synchronization, curriculum alignment/duration, and later PRs remain deferred.
+PR 2 manual UI and restart verification is complete; no checklist items remain pending.
+
+### Verification boundaries and implementation limits
+
+Automated verification used temporary fixtures and mocked content; the manual observations above were supplied by the user. Real disk exhaustion and concurrent external file edits were not induced by automated tests; write errors were injected at the persistence boundary. Existing write conventions are retained: JSON/Markdown are not a multi-file transaction, so a Markdown failure can leave a valid setup-bearing JSON file while the UI reports failure and planning stops. Same-goal reuse on the new-goal route remains the intentional existing backend behavior; the saved roadmap setup is not rewritten merely because a week is generated. Roadmap-tab synchronization, curriculum alignment/duration, and later PRs remain deferred.

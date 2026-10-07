@@ -572,7 +572,7 @@ Existing-roadmap selection loads JSON, restores and locks the six fields, and us
 
 **Implementation/integration status:** implemented in shared roadmap validation/render/save, direct/ReAct input forwarding, planner service, and Streamlit input routing. Original sprint goals and acceptance criteria remain unchanged.
 
-**Validation status:** automated persistence and Streamlit AppTest coverage recorded in [EVAL-PR2-001](EVALS.md#eval-pr2-001--embedded-setup-and-read-only-restoration). No paid APIs used. Manual restart/browser verification remains pending.
+**Validation status:** automated persistence and Streamlit AppTest coverage recorded in [EVAL-PR2-001](EVALS.md#eval-pr2-001--embedded-setup-and-read-only-restoration). No paid APIs used for automated checks. The user confirmed successful manual UI verification, restart persistence, and separation of settings on 2026-10-07.
 
 **Out of scope:** editing existing settings, legacy migration/compatibility, daily resume, lesson selection, curriculum policy, critic repair, roadmap-tab synchronization, general redesign, and resetting other learning data. Remaining PR scopes stay provisional.
 
