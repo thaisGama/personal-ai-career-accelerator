@@ -298,6 +298,7 @@ if clear:
         st.session_state.pop(key, None)
     st.rerun()
 
+generation_succeeded = False
 if generate:
     try:
         if planning_route == "Use an existing roadmap":
@@ -324,7 +325,11 @@ if generate:
             # The service normalizes both planner modes to result["plan_path"].
             saved_plan = result.get("plan_path")
             if not saved_plan:
-                raise ValueError(result.get("error") or "Planner returned no saved weekly plan. Check the planner trace and try again.")
+                reason = result.get("final_reason")
+                detail = f" (reason: {reason})" if reason else ""
+                trace = result.get("trace_path")
+                guidance = f"Check the planner trace at {trace} and try again." if trace else "Check the planner trace and try again."
+                raise ValueError(result.get("error") or f"Planner returned no saved weekly plan{detail}. {guidance}")
             saved_plan_path = Path(saved_plan)
             if not saved_plan_path.is_absolute():
                 saved_plan_path = BASE_DIR / saved_plan_path
@@ -337,6 +342,7 @@ if generate:
         st.session_state["planner_linkedin_md"] = service_output.get("linkedin_md", "")
         # Update before View Plans instantiates its widget on this run.
         st.session_state["weekly_plans_select"] = saved_plan_path
+        generation_succeeded = True
     except Exception as exc:
         st.error(f"Failed to generate plan: {exc}")
 
@@ -365,7 +371,10 @@ with planner_tab:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         result = st.session_state.get("planner_result")
         if result:
-            st.success("Saved")
+            if generation_succeeded:
+                st.success("Saved")
+            else:
+                st.caption("Previously saved outputs")
             st.write(f"**Plan:** `{result.get('plan_path')}`")
             st.write(f"**LinkedIn:** `{result.get('linkedin_path')}`")
             if result.get("learning_unit_path"):

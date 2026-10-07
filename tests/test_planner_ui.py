@@ -13,6 +13,7 @@ from src.core.services import planner_service
 from src.agent import tools
 
 APP = Path(__file__).resolve().parents[1] / "app.py"
+REAL_PLANNER_SERVICE = planner_service.run_weekly_planner_service
 
 
 def widget(at, kind, label):
@@ -82,25 +83,74 @@ def test_routes_browsing_and_exact_generated_plan(ui):
     assert any(t.label == "Learning Library" for t in at.tabs)
 
 
-@pytest.mark.parametrize("failure", ["exception", "no_path", "missing_file"])
-def test_failed_generation_preserves_selection_and_preview(ui, monkeypatch, failure):
+@pytest.mark.parametrize("failure", ["exception", "service_failure", "missing_file"])
+def test_failed_generation_preserves_selection_and_preview_then_retry(ui, monkeypatch, failure):
     at, calls, root = ui
     widget(at, "button", "Generate plan").click().run()
-    at.selectbox(key="weekly_plans_select").set_value(root / "weekly_plans" / "old.md").run()
-    previous = at.session_state["planner_result"]
+    working_path = root / "weekly_plans" / "generated.md"
+    assert at.selectbox(key="weekly_plans_select").value == working_path
+    previous = {key: at.session_state[key] for key in (
+        "planner_result", "planner_plan_md", "planner_linkedin_md",
+    )}
+    saved_files = {p: p.read_bytes() for p in (root / "weekly_plans").glob("*.md")}
+    backend_calls = []
 
     def fail(**kwargs):
+        backend_calls.append(kwargs)
         if failure == "exception":
             raise RuntimeError("Provider unavailable")
-        return {"result": {"plan_path": str(root / "missing.md")} if failure == "missing_file" else {"error": "Controller stopped"}}
+        if failure == "service_failure":
+            # Actual ReAct result shape on controller parse failure, no outputs saved.
+            return planner_service.react_agent._safe_final_result(
+                {"weekly_plan_path": ""}, final_reason="parse_error",
+            )
+        return {"plan_path": str(root / "weekly_plans" / "missing.md")}
 
-    monkeypatch.setattr(planner_service, "run_weekly_planner_service", fail)
+    monkeypatch.setattr(planner_service, "run_weekly_planner_service", REAL_PLANNER_SERVICE)
+    monkeypatch.setattr(planner_service.weekly_planner, "generate_and_save_week", fail)
+    monkeypatch.setattr(planner_service.react_agent, "run_weekly_planner_agent_react", fail)
+    if failure == "service_failure":
+        at.checkbox(key="planner_use_agent").check().run()
     widget(at, "button", "Generate plan").click().run()
+    assert len(backend_calls) == 1
     assert not at.exception
-    assert at.error and "Failed to generate plan" in at.error[0].value
-    assert at.selectbox(key="weekly_plans_select").value.name == "old.md"
-    assert at.session_state["planner_result"] == previous
-    assert at.session_state["planner_plan_md"] == "# Generated plan"
+    expected_error = {
+        "exception": "Provider unavailable",
+        "service_failure": "Planner returned no saved weekly plan",
+        "missing_file": "generated weekly plan file is missing",
+    }[failure]
+    assert any("Failed to generate plan" in msg.value and expected_error in msg.value for msg in at.error)
+    if failure == "service_failure":
+        assert "parse_error" in at.error[0].value
+    assert at.selectbox(key="weekly_plans_select").value == working_path
+    assert working_path.is_file()
+    for key, value in previous.items():
+        assert at.session_state[key] == value
+    assert any(msg.value == "# Generated plan" for msg in at.markdown)
+    assert {p: p.read_bytes() for p in (root / "weekly_plans").glob("*.md")} == saved_files
+    assert not at.success
+
+    def retry(**kwargs):
+        backend_calls.append(kwargs)
+        path = root / "weekly_plans" / "retry.md"
+        path.write_text("# Retry plan")
+        if failure == "service_failure":
+            return planner_service.react_agent._safe_final_result(
+                {"weekly_plan_path": str(path)}, final_reason="success",
+            )
+        return {"plan_path": path, "raw_markdown": "# Retry plan"}
+
+    monkeypatch.setattr(planner_service.weekly_planner, "generate_and_save_week", retry)
+    monkeypatch.setattr(planner_service.react_agent, "run_weekly_planner_agent_react", retry)
+    widget(at, "button", "Generate plan").click().run()
+    assert len(backend_calls) == 2
+    assert not at.exception and not at.error
+    assert at.selectbox(key="weekly_plans_select").value == root / "weekly_plans" / "retry.md"
+    assert at.session_state["planner_result"]["plan_path"] == str(root / "weekly_plans" / "retry.md")
+    assert "# Retry plan" in at.session_state["planner_plan_md"]
+    assert any(msg.value == "# Retry plan" for msg in at.markdown)
+    assert any(msg.value == "Saved" for msg in at.success)
+    assert working_path.read_bytes() == saved_files[working_path]
 
 
 def test_missing_selections_and_empty_roadmaps(ui):
@@ -120,6 +170,31 @@ def test_missing_selections_and_empty_roadmaps(ui):
     at.run()
     assert not at.exception
     assert at.selectbox(key="weekly_plans_select").value.name == "other.md"
+    assert any("previously selected weekly plan is no longer available" in msg.value for msg in at.warning)
+    assert any(msg.value == "# Other plan" for msg in at.markdown)
+    assert calls == []
+    (root / "weekly_plans" / "other.md").unlink()
+    at.run()
+    assert not at.exception
+    assert not any(item.label == "Choose a weekly plan" for item in at.selectbox)
+    assert any("No weekly plans found" in msg.value for msg in at.info)
+    assert calls == []
+
+
+def test_empty_roadmap_list_guides_new_goal_without_generation(ui):
+    at, calls, root = ui
+    for path in (root / "roadmaps").glob("*.json"):
+        path.unlink()  # Temporary fixture files only.
+    at.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    assert not at.exception
+    assert at.selectbox(key="planner_saved_roadmap").options == []
+    assert at.selectbox(key="planner_saved_roadmap").value is None
+    assert widget(at, "button", "Generate plan").disabled
+    assert any("Start a new learning goal" in msg.value and "create one" in msg.value for msg in at.info)
+    assert at.selectbox(key="weekly_plans_select").value.name == "old.md"
+    assert calls == []
+    at.radio(key="planner_route").set_value("Start a new learning goal").run()
+    assert not widget(at, "button", "Generate plan").disabled
     assert calls == []
 
 

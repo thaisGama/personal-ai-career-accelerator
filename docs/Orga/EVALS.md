@@ -689,3 +689,54 @@ Validate how the automatically generated Learning Unit relates to the new Day-ce
 **Reason:**
 The generated Learning Unit is week/milestone-level, not Day-level.
 The current implementation does not yet satisfy the target Day → Learning Unit relationship from the day-centric architecture.
+
+---
+
+## EVAL-PR1-001 — Failed Generation, Retained Plan, and Successful Retry
+
+**Date:** 2026-10-07
+
+**Scope:** Revised PR 1 on `feature/planner-roadmap-selection`.
+
+**Result:** PASS — automated verification; manual browser/provider verification not performed.
+
+### Contract inspected
+
+`run_weekly_planner_service` returns `result`, `plan_md`, and `linkedin_md`. It normalizes direct `plan_path` and ReAct `weekly_plan_path` to `result.plan_path`. Exceptions propagate to the UI. A supported ReAct failure is the `_safe_final_result` shape with an empty `weekly_plan_path` and `final_reason` such as `parse_error`; it need not contain an `error` key. The earlier synthetic `error`-only test did not verify this supported shape.
+
+### Automated setup and observations
+
+Streamlit 1.52.1 AppTest runs the current `app.py` with `BASE_DIR` redirected to pytest temporary directories. Initial successful generation is mocked; subsequent failure and retry use the real planner-service wrapper with mocked direct/ReAct backends. No paid API, live credentials, real study-file deletion, or progress reset is used.
+
+Each failure scenario starts with a successfully saved `generated.md` selected and its plan/LinkedIn preview and result retained:
+
+| Scenario | Automated observation | Result |
+| --- | --- | --- |
+| Backend raises `RuntimeError("Provider unavailable")` | Error includes provider failure; working selection, previews, result, and saved-plan bytes remain unchanged; no success message. Successful mocked retry selects the newly saved `retry.md` and displays its content. | PASS |
+| ReAct returns supported failure result (`weekly_plan_path = ""`, `final_reason = "parse_error"`) | Real service returns no saved plan; UI displays an error including the failure reason, keeps the working plan/content, and announces no success. Successful ReAct-shaped mocked retry selects `retry.md`. | PASS |
+| Backend reports a nonexistent generated file | UI displays missing-output error, retains the existing selection/content and previews, and never selects the nonexistent file. Successful mocked retry selects `retry.md`. | PASS |
+| Previously selected file removed from temporary fixtures; another plan exists | UI warns that the previous selection is unavailable and displays the remaining saved plan. No generation is called. | PASS |
+| Last remaining saved plan removed from temporary fixtures | UI shows “No weekly plans found”, renders without exception, and offers no nonexistent plan option. No generation is called. | PASS |
+| Selected temporary roadmap removed; malformed JSON also present | Invalid selection is cleared and generation is disabled. No generation is called. | PASS |
+| Truly empty temporary roadmap directory | Existing-roadmap route has no selected value, disables generation, and explains how to create a roadmap via a new goal. Switching to the new-goal route enables generation without calling it. Existing plan browsing still works. | PASS |
+
+### Failure reproduced and scoped fix
+
+Before the fix, the strengthened focused suite returned **3 failed, 5 passed**: all three failed-generation scenarios retained their working state correctly but still displayed the old unconditional “Saved” success message. The UI now announces “Saved” only on the run that successfully accepts a saved generated plan; subsequent browsing and failed attempts label retained output “Previously saved outputs”. Missing-plan service errors now include the supported `final_reason` and `trace_path` when present.
+
+### Actual checks after the fix
+
+- `.venv/bin/python -m pytest tests/test_planner_ui.py -q`: **8 passed**.
+- `.venv/bin/python -m pytest -q`: **57 passed**.
+- `.venv/bin/python -m compileall -q app.py tests/test_planner_ui.py`: passed.
+- `git diff --check -- app.py tests/test_planner_ui.py docs/Orga/EVALS.md`: passed.
+- Whole-worktree `git diff --check` reports a pre-existing extra blank line at EOF in unrelated `FOUNDER_NOTEBOOK.md`; that user edit is left untouched and excluded from this work package.
+
+### Manual observations and unverified behavior
+
+No new manual browser observations were made during this evaluation. AppTest verifies rendered elements, state, and fixture contents; it does not verify browser visual layout, real provider behavior, or rollback of backend writes if a real generation fails after partially saving artifacts. The mocked failures exercise no such partial writes. Trace-path guidance is implemented from the inspected contract but is not asserted in these tests.
+
+### Follow-up findings — recorded only
+
+1. **Roadmaps tab remains on an old roadmap after new-goal generation.** User-reported observation; code inspection shows independent `roadmaps_select` / `roadmaps_selected_path` browsing state and no post-generation synchronization to the newly generated roadmap. Current mock tests do not generate roadmap files, so they do not reproduce this exact manual flow. Discuss a deliberate post-generation browsing-selection update separately while preserving independence from planner inputs. No fix here.
+2. **Narrow goals may produce excessively long curricula.** User-reported observation; no curriculum-length evaluation or live generation performed here. Evaluate goal-to-curriculum alignment, breadth, and duration in [provisional PR 5 — Generation policy and quality](REFACTOR_PLAN.md#provisional-pr-5--generation-policy-and-quality). No prompt or curriculum changes here.
