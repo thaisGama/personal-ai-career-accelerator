@@ -75,6 +75,26 @@ def test_generation_routes_persist_exact_application_setup(tmp_path, mocked_cont
     assert "## Learner setup" in markdown
     assert "hours_per_week: 3.5" in markdown
     assert Path(result["result"]["plan_path"]).is_file()
+    progress = json.loads((tmp_path / "data" / "learning_progress.json").read_text())
+    week = progress["weeks"][-1]
+    assert week["roadmap_id"] == "distinct_submitted_goal"
+    assert (tmp_path / week["plan_path"]).resolve() == Path(result["result"]["plan_path"]).resolve()
+
+
+@pytest.mark.parametrize("agent", [False, True])
+def test_generation_routes_link_week_level_learning_material(tmp_path, mocked_content, monkeypatch, agent):
+    content = {"plan_markdown": PLAN, "linkedin_markdown": "Draft", "memory_snippet": "",
+               "learning_unit_md": "# Learning Unit: Week overview\n\n## Lesson\nOriginal content"}
+    monkeypatch.setattr(weekly_planner, "generate_weekly_plan_and_learning_unit", lambda **kw: content)
+    monkeypatch.setattr(react_agent, "tool_generate_weekly_plan", lambda **kw: {
+        "weekly_plan_md": PLAN, "linkedin_post_md": "Draft", "memory_snippet": "",
+        "learning_unit_md": content["learning_unit_md"],
+    })
+    result = service(tmp_path, agent)
+    week = json.loads((tmp_path / "data" / "learning_progress.json").read_text())["weeks"][0]
+    assert week["roadmap_id"] == "distinct_submitted_goal"
+    assert (tmp_path / week["learning_unit_path"]).resolve() == Path(result["result"]["learning_unit_path"]).resolve()
+    assert all(not day["learning_unit_path"] and not day["quiz_result"] for day in week["days"])
 
 
 @pytest.mark.parametrize("agent", [False, True])

@@ -22,6 +22,137 @@ def widget(at, kind, label):
 
 
 @pytest.fixture
+def roadmap_ui(ui):
+    at, calls, root = ui
+    library = root / "docs" / "learning_units"
+    for name in ("alpha_day.md", "alpha_week.md", "alpha_review.md", "beta_day.md"):
+        (library / name).write_text(f"# {name}\n\n## Lesson\nOriginal lesson content")
+    progress = root / "data" / "learning_progress.json"
+    progress.parent.mkdir()
+    progress.write_text(json.dumps({"roadmap_id": "unsafe_legacy_owner", "weeks": [
+        {"roadmap_id": "alpha", "week_id": "week_001", "week_number_global": 1,
+         "learning_unit_path": "docs/learning_units/alpha_week.md", "goal": "Alpha foundations",
+         "days": [
+             {"day_id": "day_001", "day_number": 1, "topic": "Alpha passed topic", "quiz_result": "PASS", "learning_unit_path": "docs/learning_units/alpha_day.md"},
+             {"day_id": "day_002", "day_number": 2, "topic": "Alpha failed topic", "quiz_result": "FAIL"},
+             {"day_id": "day_003", "day_number": 3, "topic": "Alpha future topic", "quiz_result": ""},
+             {"day_id": "day_004", "day_number": 4, "topic": "Review alpha", "quiz_result": "", "is_review": True, "review_of_day_id": "day_002", "learning_unit_path": "docs/learning_units/alpha_review.md"},
+         ]},
+        {"roadmap_id": "beta", "week_id": "week_002", "week_number_global": 2,
+         "days": [{"day_id": "day_005", "day_number": 1, "topic": "Beta only topic", "quiz_result": "PASS", "learning_unit_path": "docs/learning_units/beta_day.md"}]},
+    ]}))
+    at.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    at.selectbox(key="planner_saved_roadmap").set_value("alpha").run()
+    assert not at.exception
+    return at, calls, root
+
+
+def test_progress_and_library_are_isolated_before_generation(roadmap_ui):
+    at, calls, root = roadmap_ui
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    planner_text = "\n".join(item.value for item in at.tabs[0].markdown)
+    assert any(item.value == "Alpha learning" for item in at.tabs[0].subheader)
+    assert "Alpha passed topic" in planner_text and "Needs review" in planner_text
+    assert "Beta only topic" not in planner_text
+    assert at.tabs[0].metric[0].value == "1 of 3"
+    assert at.tabs[0].metric[1].value == "0 of 1"
+    assert at.session_state["active_roadmap_id"] == "alpha"
+    choices = at.selectbox(key="learning_unit_select").options
+    assert len(choices) == 3 and not any("Beta" in value or "existing.md" in value for value in choices)
+    widget(at, "button", "Continue Learning — Week 1, Day 4").click().run()
+    assert not at.exception
+    assert at.selectbox(key="learning_unit_select").value == "alpha_review.md"
+    assert at.session_state["workspace_tab"] == "Learning Library"
+    assert calls == []
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_switching_roadmaps_clears_preview_quiz_and_library_context(roadmap_ui):
+    at, calls, root = roadmap_ui
+    at.session_state["planner_plan_md"] = "Stale Alpha preview"
+    at.session_state["planner_linkedin_md"] = "Stale Alpha draft"
+    at.session_state["quiz_markdown"] = "Stale Alpha quiz"
+    at.session_state["quiz_answer_1"] = "Stale Alpha answer"
+    at.selectbox(key="planner_saved_roadmap").set_value("beta").run()
+    assert not at.exception
+    assert at.session_state["active_roadmap_id"] == "beta"
+    assert at.session_state["quiz_roadmap_id"] == "beta"
+    assert at.selectbox(key="learning_unit_select").value == "beta_day.md"
+    assert len(at.selectbox(key="learning_unit_select").options) == 1
+    text = "\n".join(item.value for item in at.tabs[0].markdown)
+    assert any(item.value == "Beta learning" for item in at.tabs[0].subheader)
+    assert "Alpha" not in text
+    assert at.tabs[0].metric[0].value == "1 of 1"
+    assert not at.session_state.filtered_state.get("planner_plan_md")
+    assert not at.session_state.filtered_state.get("quiz_markdown")
+    assert "quiz_answer_1" not in at.session_state.filtered_state
+    assert calls == []
+
+
+def test_library_headers_follow_selected_unit_and_preserve_week_scope(roadmap_ui):
+    at, calls, root = roadmap_ui
+    unit = root / "docs" / "learning_units" / "alpha_day.md"
+    before = unit.read_bytes()
+    at.selectbox(key="learning_unit_select").set_value("alpha_day.md").run()
+    library = at.tabs[4]
+    assert any(c.value == "Week 1 · Day 1" for c in library.caption)
+    assert any(m.value == "**Topic:** Alpha passed topic" for m in library.markdown)
+    assert any(m.value == "**Status:** Completed" for m in library.markdown)
+    assert unit.read_bytes() == before
+    at.selectbox(key="learning_unit_select").set_value("alpha_week.md").run()
+    assert any(c.value == "Week 1 · Week overview" for c in at.tabs[4].caption)
+    assert not any("Day " in c.value for c in at.tabs[4].caption)
+    at.radio(key="planner_route").set_value("Start a new learning goal").run()
+    at.selectbox(key="learning_unit_select").set_value("existing.md").run()
+    assert any("context unavailable" in c.value for c in at.tabs[4].caption)
+    assert not at.exception and calls == []
+
+
+def test_unknown_progress_does_not_fabricate_completion(ui):
+    at, calls, root = ui
+    path = root / "data" / "learning_progress.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"roadmap_id": "alpha", "weeks": [
+        {"goal": "Alpha learning", "days": [{"status": "PASSED", "quiz_result": "PASS"}]},
+    ]}))
+    at.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    at.selectbox(key="planner_saved_roadmap").set_value("alpha").run()
+    assert not at.exception
+    assert any("Progress unavailable" in msg.value for msg in at.tabs[0].info)
+    assert not at.tabs[0].metric
+    assert not any(s.label == "Choose a learning unit" for s in at.tabs[4].selectbox)
+    assert calls == []
+
+
+def test_day_generation_opens_material_without_completing_day(roadmap_ui, monkeypatch):
+    from src.agent.learning_progress_store import update_day_learning_unit_path
+    at, calls, root = roadmap_ui
+    path = root / "data" / "learning_progress.json"
+    progress = json.loads(path.read_text())
+    progress["weeks"][0]["days"][3]["learning_unit_path"] = ""
+    path.write_text(json.dumps(progress))
+    generated = []
+
+    def generate(**kwargs):
+        generated.append(kwargs)
+        relative = "docs/learning_units/generated_review.md"
+        (root / relative).write_text("# Review\n\n## Lesson\nReview content")
+        update_day_learning_unit_path(path, kwargs["day_id"], relative)
+        return {"learning_unit_path": relative}
+
+    monkeypatch.setattr(tools, "tool_generate_learning_unit_for_day", generate)
+    at.run()
+    widget(at, "button", "Generate learning unit — Week 1, Day 4").click().run()
+    assert not at.exception
+    assert generated[0]["day_id"] == "day_004"
+    assert at.selectbox(key="learning_unit_select").value == "generated_review.md"
+    assert at.tabs[0].metric[0].value == "1 of 3"
+    assert at.tabs[0].metric[1].value == "0 of 1"
+    assert json.loads(path.read_text())["weeks"][0]["days"][3]["quiz_result"] == ""
+    assert calls == []
+
+
+@pytest.fixture
 def ui(tmp_path, monkeypatch):
     roadmaps = tmp_path / "roadmaps"
     roadmaps.mkdir()

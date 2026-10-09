@@ -909,7 +909,7 @@ def tool_generate_learning_unit_for_day(
     week, day = find_week_and_day(progress, day_id)
 
     roadmap_context = (
-        f"Roadmap: {progress.get('roadmap_id') or 'not provided'}\n"
+        f"Roadmap: {week.get('roadmap_id') or 'not provided'}\n"
         f"Phase: {week.get('phase_id') or 'not provided'}\n"
         f"Milestone: {week.get('milestone_id') or 'not provided'}"
     )
@@ -1009,7 +1009,7 @@ def tool_generate_quiz_for_day(
         f"Estimated minutes: {day.get('estimated_minutes') or 0}\n\n"
         f"Week title: {week.get('title') or ''}\n"
         f"Week goal: {week.get('goal') or ''}\n"
-        f"Roadmap: {progress.get('roadmap_id') or 'not provided'}\n"
+        f"Roadmap: {week.get('roadmap_id') or 'not provided'}\n"
         f"Phase: {week.get('phase_id') or 'not provided'}\n"
         f"Milestone: {week.get('milestone_id') or 'not provided'}\n\n"
         "Learning unit content:\n"

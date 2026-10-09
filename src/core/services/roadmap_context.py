@@ -94,9 +94,9 @@ def learning_units(base_dir: Path, weeks: list[dict], roadmap_id: str | None) ->
     return result
 
 
-def switch_roadmap(state, roadmap_id: str | None) -> None:
+def switch_roadmap(state, roadmap_id: str | None, *, existing_mode: bool = False) -> None:
     """Clear UI state before its widgets are instantiated, without disk writes."""
-    if state.get("workspace_roadmap_id") != roadmap_id:
+    if state.get("workspace_roadmap_id") != roadmap_id or state.get("workspace_existing_mode", False) != existing_mode:
         for key in list(state):
             if key in {
                 "planner_result", "planner_plan_md", "planner_plan_path", "planner_linkedin_md",
@@ -104,6 +104,7 @@ def switch_roadmap(state, roadmap_id: str | None) -> None:
             } or key.startswith("quiz_") or key.startswith("done_"):
                 state.pop(key, None)
         state["workspace_roadmap_id"] = roadmap_id
+        state["workspace_existing_mode"] = existing_mode
     state["active_roadmap_id"] = roadmap_id or ""
     if roadmap_id:
         state["quiz_roadmap_id"] = roadmap_id
