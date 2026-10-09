@@ -60,6 +60,59 @@ def progress_summary(weeks: list[dict]) -> dict:
     }
 
 
+def resolve_quiz_day(weeks: list[dict], roadmap_id: str | None, selected_day: dict | None = None) -> tuple[dict | None, str | None]:
+    """Prefer explicit identity over the recommendation; never guess a day."""
+    if not roadmap_id:
+        return None, None
+    selected_weeks = roadmap_weeks(weeks, roadmap_id)
+    if selected_day is not None:
+        matches = [(w, d) for w in selected_weeks for d in days_in_week(w)
+                   if selected_day.get("roadmap_id") == roadmap_id
+                   and w.get("week_id") == selected_day.get("week_id")
+                   and d.get("day_id") == selected_day.get("day_id")]
+        if len(matches) != 1:
+            return None, "The selected learning day is unavailable or ambiguous. Select a linked day in the Learning Library."
+        week, day = matches[0]
+    else:
+        recommended = progress_summary(selected_weeks)["recommended"]
+        if not recommended:
+            return None, None
+        week, day = recommended
+    if (not week.get("week_id") or week.get("week_number_global") is None
+            or not day.get("day_id") or day.get("day_number") is None
+            or not str(day.get("topic") or "").strip()
+            or sum(d.get("day_id") == day.get("day_id") for w in weeks for d in days_in_week(w)) != 1):
+        return None, "The selected learning day has incomplete or ambiguous metadata. A day-linked quiz cannot be generated."
+    return {"roadmap_id": roadmap_id, "week": week, "day": day}, None
+
+
+def quiz_day_identity(context: dict) -> dict:
+    return {"roadmap_id": context["roadmap_id"], "week_id": context["week"].get("week_id"),
+            "day_id": context["day"].get("day_id")}
+
+
+def preserve_quiz_draft(state) -> None:
+    """Keep unsent quiz/answers in session when navigation invalidates them."""
+    answers = {k: state[k] for k in list(state) if k.startswith("quiz_answer_") or k == "quiz_answers_fallback"}
+    if state.get("quiz_markdown") and (not state.get("quiz_eval") or answers != state.get("quiz_submitted_answers", {})):
+        draft = {k: state[k] for k in list(state) if k.startswith("quiz_")}
+        state.setdefault("saved_quiz_drafts", []).append(draft)
+        state["quiz_draft_notice"] = "Quiz context changed. The previous quiz and unsent answers were preserved below and will not be submitted for the new day."
+
+
+def sync_quiz_context(state, context: dict | None, error: str | None = None) -> None:
+    key = tuple(quiz_day_identity(context).values()) if context else ("invalid" if error else "standalone",)
+    if state.get("quiz_context_key") != key:
+        preserve_quiz_draft(state)
+        for name in list(state):
+            if name in {"quiz_markdown", "quiz_path", "quiz_binding", "quiz_generation_topic", "quiz_eval",
+                        "quiz_eval_block", "quiz_eval_score", "quiz_eval_mastery", "quiz_eval_decision",
+                        "quiz_answers_fallback", "quiz_unlocked", "quiz_task_update", "quiz_propose_done",
+                        "quiz_task_ids", "quiz_selected_tasks", "quiz_task_statuses", "quiz_submitted_answers"} or name.startswith("quiz_answer_") or name.startswith("done_"):
+                state.pop(name, None)
+        state["quiz_context_key"] = key
+
+
 def saved_resource(base_dir: Path, value: object, directory: str) -> Path | None:
     """Accept existing files only within the intended saved-resource directory."""
     if not isinstance(value, str) or not value:
@@ -97,14 +150,18 @@ def learning_units(base_dir: Path, weeks: list[dict], roadmap_id: str | None) ->
 def switch_roadmap(state, roadmap_id: str | None, *, existing_mode: bool = False) -> None:
     """Clear UI state before its widgets are instantiated, without disk writes."""
     if state.get("workspace_roadmap_id") != roadmap_id or state.get("workspace_existing_mode", False) != existing_mode:
+        preserve_quiz_draft(state)
+        notice = state.get("quiz_draft_notice")
         for key in list(state):
             if key in {
                 "planner_result", "planner_plan_md", "planner_plan_path", "planner_linkedin_md",
-                "weekly_plans_select", "learning_unit_select", "workspace_tab",
+                "weekly_plans_select", "learning_unit_select", "workspace_tab", "selected_learning_day",
             } or key.startswith("quiz_") or key.startswith("done_"):
                 state.pop(key, None)
         state["workspace_roadmap_id"] = roadmap_id
         state["workspace_existing_mode"] = existing_mode
+        if notice:
+            state["quiz_draft_notice"] = notice
     state["active_roadmap_id"] = roadmap_id or ""
     if roadmap_id:
         state["quiz_roadmap_id"] = roadmap_id

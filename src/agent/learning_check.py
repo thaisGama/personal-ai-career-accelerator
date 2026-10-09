@@ -80,13 +80,15 @@ def save_day_quiz_markdown(
     topic: str,
     quiz_markdown: str,
     base_dir: Path | str = ".",
+    quiz_id: str | None = None,
 ) -> Path:
     """Persist a day-specific quiz under docs/quizzes."""
     root = Path(base_dir)
     quizzes_dir = root / "docs" / "quizzes"
     quizzes_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"{day_id}_{slugify(topic)}.md"
+    suffix = f"_{slugify(quiz_id)}" if quiz_id else ""
+    filename = f"{day_id}_{slugify(topic)}{suffix}.md"
     path = quizzes_dir / filename
     path.write_text(quiz_markdown.strip(), encoding="utf-8")
     return path

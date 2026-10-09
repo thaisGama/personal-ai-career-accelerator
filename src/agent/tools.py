@@ -994,6 +994,7 @@ def tool_generate_quiz_for_day(
     day_id: str,
     base_dir: Path,
     model: str = DEFAULT_MODEL,
+    quiz_id: str | None = None,
 ) -> Dict[str, Any]:
     """Generate and persist a quiz for one day in learning_progress.json."""
     progress_path = resolve_learning_progress_path(base_dir)
@@ -1006,6 +1007,7 @@ def tool_generate_quiz_for_day(
         f"Day ID: {day.get('day_id')}\n"
         f"Day number: {day.get('day_number')}\n"
         f"Day topic: {topic}\n"
+        f"Day learning objectives: {day.get('learning_objectives') or day.get('objectives') or topic}\n"
         f"Estimated minutes: {day.get('estimated_minutes') or 0}\n\n"
         f"Week title: {week.get('title') or ''}\n"
         f"Week goal: {week.get('goal') or ''}\n"
@@ -1018,7 +1020,7 @@ def tool_generate_quiz_for_day(
     user_prompt = (
         f"Topic: {topic}\n"
         "Generate a quiz for this exact Day. Base questions primarily on the learning unit content "
-        "when it is available.\n\n"
+        "when it is available. Assess only this day's objectives; the week goal is background, not quiz scope.\n\n"
         f"{context_text}\n\n"
         "Generate the quiz now."
     )
@@ -1035,6 +1037,7 @@ def tool_generate_quiz_for_day(
         topic=topic,
         quiz_markdown=quiz_markdown,
         base_dir=base_dir,
+        quiz_id=quiz_id,
     )
     relative_path = _relative_to_base(saved_path, base_dir)
     _progress, _week, updated_day = update_day_quiz_path(
@@ -1072,17 +1075,26 @@ def tool_evaluate_quiz_for_day(
     base_dir: Path,
     model: str = DEFAULT_MODEL,
     reflection: str = "",
+    quiz_markdown: str | None = None,
+    expected_roadmap_id: str | None = None,
+    expected_week_id: str | None = None,
+    quiz_topic: str | None = None,
 ) -> Dict[str, Any]:
     """Evaluate one Day quiz and update that Day with PASS/FAIL only."""
     progress_path = resolve_learning_progress_path(base_dir)
     progress = load_learning_progress(progress_path)
     week, day = find_week_and_day(progress, day_id)
-    quiz_markdown = _read_relative_text(base_dir, str(day.get("quiz_path") or ""))
+    if expected_roadmap_id is not None and week.get("roadmap_id") != expected_roadmap_id:
+        raise ValueError("Quiz roadmap association no longer matches the saved day.")
+    if expected_week_id is not None and week.get("week_id") != expected_week_id:
+        raise ValueError("Quiz week association no longer matches the saved day.")
+    if quiz_markdown is None:
+        quiz_markdown = _read_relative_text(base_dir, str(day.get("quiz_path") or ""))
     if not quiz_markdown.strip():
         raise FileNotFoundError(f"Quiz not found for day {day_id}: {day.get('quiz_path') or ''}")
 
     eval_result = evaluate_micro_quiz(
-        topic=str(day.get("topic") or "Learning day"),
+        topic=quiz_topic or str(day.get("topic") or "Learning day"),
         quiz_markdown=quiz_markdown,
         learner_answers=learner_answers,
         model=model,

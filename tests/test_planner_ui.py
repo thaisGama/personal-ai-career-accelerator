@@ -77,7 +77,8 @@ def test_switching_roadmaps_clears_preview_quiz_and_library_context(roadmap_ui):
     assert not at.exception
     assert at.session_state["active_roadmap_id"] == "beta"
     assert at.session_state["quiz_roadmap_id"] == "beta"
-    assert at.selectbox(key="learning_unit_select").value == "beta_day.md"
+    # A completed roadmap has no recommended day; historical browsing is explicit.
+    assert at.selectbox(key="learning_unit_select").value is None
     assert len(at.selectbox(key="learning_unit_select").options) == 1
     text = "\n".join(item.value for item in at.tabs[0].markdown)
     assert any(item.value == "Beta learning" for item in at.tabs[0].subheader)
@@ -150,6 +151,152 @@ def test_day_generation_opens_material_without_completing_day(roadmap_ui, monkey
     assert at.tabs[0].metric[1].value == "0 of 1"
     assert json.loads(path.read_text())["weeks"][0]["days"][3]["quiz_result"] == ""
     assert calls == []
+
+
+@pytest.fixture
+def quiz_day_ui(roadmap_ui, monkeypatch):
+    at, calls, root = roadmap_ui
+    path = root / "data" / "learning_progress.json"
+    progress = json.loads(path.read_text())
+    progress["weeks"][0]["days"] = progress["weeks"][0]["days"][:3]
+    for day in progress["weeks"][0]["days"]:
+        day["quiz_result"] = ""
+    progress["weeks"][0]["days"][1]["learning_unit_path"] = "docs/learning_units/alpha_day2.md"
+    path.write_text(json.dumps(progress))
+    (root / "docs" / "learning_units" / "alpha_day2.md").write_text("# Day two\n\n## Lesson\nDAY TWO SAVED MATERIAL")
+    generated = []
+    quiz = "<<QUIZ>>\nDay quiz\nQ1) Explain this day's concept.\n<<ANSWER_KEY>>\nQ1: Explain the concept.\n<<RUBRIC>>\nBe accurate."
+    monkeypatch.setattr(tools, "call_llm", lambda **kw: generated.append(kw) or quiz)
+    monkeypatch.setattr(tools, "tool_select_quiz_tasks", lambda **kw: pytest.fail("Linked quizzes must omit roadmap-wide task filtering"))
+    at.run()
+    assert not at.exception
+    return at, generated, root
+
+
+def test_quiz_defaults_to_recommended_day_and_explicit_library_selection_overrides(quiz_day_ui):
+    at, generated, root = quiz_day_ui
+    topic = widget(at, "text_input", "Topic")
+    assert topic.value == "Alpha passed topic" and topic.disabled
+    assert any(c.value == "Week 1 · Day 1" for c in at.tabs[3].caption)
+    at.selectbox(key="learning_unit_select").set_value("alpha_day2.md").run()
+    assert widget(at, "text_input", "Topic").value == "Alpha failed topic"
+    assert any(c.value == "Week 1 · Day 2" for c in at.tabs[3].caption)
+    at.checkbox(key="quiz_use_tasks").check().run()
+    widget(at, "button", "Generate quiz for Day 2").click().run()
+    assert not at.exception
+    assert "Day ID: day_002" in generated[0]["user_prompt"]
+    assert "DAY TWO SAVED MATERIAL" in generated[0]["user_prompt"]
+    assert at.session_state["quiz_binding"]["day_id"] == "day_002"
+    assert "quiz_task_ids" not in at.session_state.filtered_state
+    assert any("Task filtering is omitted" in c.value for c in at.tabs[3].caption)
+
+
+@pytest.mark.parametrize("decision,label,count", [("MOVE_ON", "PASS", "1 of 3"), ("REPEAT", "FAIL", "0 of 3")])
+def test_linked_quiz_evaluation_refreshes_progress_for_selected_day_only(quiz_day_ui, monkeypatch, decision, label, count):
+    at, generated, root = quiz_day_ui
+    at.selectbox(key="learning_unit_select").set_value("alpha_day2.md").run()
+    widget(at, "button", "Generate quiz for Day 2").click().run()
+    original_binding = dict(at.session_state["quiz_binding"])
+    at.text_area(key="quiz_answer_1").set_value("My answer for Day 2").run()
+    monkeypatch.setattr(tools, "evaluate_micro_quiz", lambda **kw: {
+        "move_on_decision": decision, "eval_block": "Evaluation of Day 2", "score": 8,
+    })
+    widget(at, "button", "Submit answers for evaluation").click().run()
+    assert not at.exception
+    assert at.tabs[0].metric[0].value == count
+    assert at.session_state["quiz_binding"] == original_binding
+    progress = json.loads((root / "data" / "learning_progress.json").read_text())
+    assert progress["weeks"][0]["days"][1]["quiz_result"] == label
+    assert progress["weeks"][0]["days"][0]["quiz_result"] == ""
+    assert progress["weeks"][1]["days"][0]["quiz_result"] == "PASS"
+    history = json.loads((root / "data" / "quiz_results.jsonl").read_text().splitlines()[-1])
+    assert history["day_id"] == "day_002" and history["roadmap_id"] == "alpha"
+    assert history["learner_answers"] == "Q1: My answer for Day 2"
+
+
+def test_roadmap_switch_invalidates_quiz_and_preserves_unsent_answers(quiz_day_ui, monkeypatch):
+    at, generated, root = quiz_day_ui
+    widget(at, "button", "Generate quiz for Day 1").click().run()
+    binding = dict(at.session_state["quiz_binding"])
+    at.text_area(key="quiz_answer_1").set_value("Unsent Day 1 answer").run()
+    at.selectbox(key="planner_saved_roadmap").set_value("beta").run()
+    assert not at.exception
+    assert not at.session_state.filtered_state.get("quiz_binding")
+    assert not at.session_state.filtered_state.get("quiz_markdown")
+    draft = at.session_state["saved_quiz_drafts"][-1]
+    assert draft["quiz_binding"] == binding
+    assert draft["quiz_answer_1"] == "Unsent Day 1 answer"
+    assert any("previous quiz and unsent answers were preserved" in w.value for w in at.tabs[3].warning)
+    monkeypatch.setattr(tools, "evaluate_micro_quiz", lambda **kw: pytest.fail("A stale quiz must not be submitted"))
+    widget(at, "button", "Submit answers for evaluation").click().run()
+    assert any("Generate or paste a quiz first" in w.value for w in at.tabs[3].warning)
+    assert json.loads((root / "data" / "learning_progress.json").read_text())["weeks"][0]["days"][0]["quiz_result"] == ""
+
+
+def test_day_switch_invalidates_quiz_and_preserves_original_draft(quiz_day_ui):
+    at, generated, root = quiz_day_ui
+    widget(at, "button", "Generate quiz for Day 1").click().run()
+    at.text_area(key="quiz_answer_1").set_value("Unsent first-day answer").run()
+    at.selectbox(key="learning_unit_select").set_value("alpha_day2.md").run()
+    assert not at.exception
+    assert widget(at, "text_input", "Topic").value == "Alpha failed topic"
+    assert not at.session_state.filtered_state.get("quiz_markdown")
+    assert at.session_state["saved_quiz_drafts"][-1]["quiz_binding"]["day_id"] == "day_001"
+    assert at.session_state["saved_quiz_drafts"][-1]["quiz_answer_1"] == "Unsent first-day answer"
+
+
+def test_regenerated_quiz_does_not_retain_previous_evaluation(quiz_day_ui, monkeypatch):
+    at, generated, root = quiz_day_ui
+    widget(at, "button", "Generate quiz for Day 1").click().run()
+    at.text_area(key="quiz_answer_1").set_value("First attempt").run()
+    monkeypatch.setattr(tools, "evaluate_micro_quiz", lambda **kw: {"move_on_decision": "MOVE_ON", "eval_block": "Passed"})
+    widget(at, "button", "Submit answers for evaluation").click().run()
+    first_id = at.session_state["quiz_binding"]["quiz_id"]
+    widget(at, "button", "Generate quiz for Day 1").click().run()
+    assert not at.exception
+    assert at.session_state["quiz_binding"]["quiz_id"] != first_id
+    assert "quiz_eval" not in at.session_state.filtered_state
+    assert "quiz_submitted_answers" not in at.session_state.filtered_state
+
+
+def test_explicit_incomplete_day_blocks_generation_instead_of_falling_back(quiz_day_ui):
+    at, generated, root = quiz_day_ui
+    path = root / "data" / "learning_progress.json"
+    data = json.loads(path.read_text())
+    data["weeks"][0]["days"][1]["topic"] = ""
+    path.write_text(json.dumps(data))
+    at.run()
+    at.selectbox(key="learning_unit_select").set_value("alpha_day2.md").run()
+    assert not at.exception
+    assert any("incomplete or ambiguous" in w.value for w in at.tabs[3].warning)
+    assert widget(at, "text_input", "Topic").value == ""
+    assert widget(at, "button", "Generate quiz").disabled
+    assert not generated
+
+
+def test_standalone_quiz_keeps_editable_topic_and_does_not_update_days(quiz_day_ui, monkeypatch):
+    from src.core.services import quiz_service
+    at, generated, root = quiz_day_ui
+    at.radio(key="planner_route").set_value("Start a new learning goal").run()
+    assert not widget(at, "text_input", "Topic").disabled
+    before = (root / "data" / "learning_progress.json").read_bytes()
+    captured = []
+    quiz = "<<QUIZ>>\nStandalone quiz\nQ1) Explain your topic.\n<<ANSWER_KEY>>\nQ1: Explanation."
+
+    def standalone(**kw):
+        captured.append(kw)
+        return {"quiz_markdown": quiz, "quiz_path": "standalone.md"}
+
+    monkeypatch.setattr(quiz_service, "generate_quiz_service", standalone)
+    monkeypatch.setattr(quiz_service, "evaluate_quiz_service", lambda **kw: {"eval_block": "Standalone evaluation", "move_on_decision": "MOVE_ON"})
+    widget(at, "text_input", "Topic").set_value("My standalone topic").run()
+    widget(at, "button", "Generate quiz").click().run()
+    at.text_area(key="quiz_answer_1").set_value("My standalone answer").run()
+    widget(at, "button", "Submit answers for evaluation").click().run()
+    assert not at.exception
+    assert captured[0]["topic"] == "My standalone topic"
+    assert not at.session_state.filtered_state.get("quiz_binding")
+    assert (root / "data" / "learning_progress.json").read_bytes() == before
 
 
 @pytest.fixture
