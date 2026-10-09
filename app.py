@@ -412,8 +412,8 @@ with st.sidebar:
 
 switch_roadmap(st.session_state, roadmap_id, existing_mode=existing_mode)
 planner_tab, plans_tab, roadmaps_tab, quiz_tab, library_tab = st.tabs(
-    ["Generate Plan", "View Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"],
-    default=st.session_state.get("workspace_tab", "Generate Plan"),
+    ["Progress Overview", "View Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"],
+    default=st.session_state.get("workspace_tab", "Progress Overview"),
 )
 # The Roadmaps tab remains a browser; the planner selector sets workspace context.
 
