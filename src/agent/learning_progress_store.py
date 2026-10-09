@@ -287,6 +287,8 @@ def append_week_from_plan(
     week_number_global: int | None = None,
     title: str | None = None,
     goal: str = "",
+    plan_path: str = "",
+    learning_unit_path: str = "",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     progress = load_learning_progress(path, roadmap_id=roadmap_id)
     existing_roadmap_id = str(progress.get("roadmap_id") or "")
@@ -329,6 +331,9 @@ def append_week_from_plan(
 
     week = {
         "week_id": _next_week_id(progress),
+        "roadmap_id": roadmap_id,
+        "plan_path": plan_path,
+        "learning_unit_path": learning_unit_path,
         "phase_id": inferred_phase_id,
         "milestone_id": inferred_milestone_id,
         "week_number_global": week_number,

@@ -1125,6 +1125,8 @@ def generate_and_save_week(
         milestone_id=roadmap_meta.get("current_milestone", "") or "",
         week_number_global=roadmap_meta.get("week_number"),
         goal=goal,
+        plan_path=plan_path.relative_to(Path(base_dir)).as_posix(),
+        learning_unit_path=learning_unit_path.relative_to(Path(base_dir)).as_posix() if learning_unit_path else "",
     )
 
     if memory_snippet:
