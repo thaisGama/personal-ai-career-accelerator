@@ -975,6 +975,8 @@ def run_weekly_planner_agent_react(
                 milestone_id=state.get("roadmap_current_milestone") or "",
                 week_number_global=state.get("roadmap_week_number"),
                 goal=state.get("goal") or goal,
+                plan_path=Path(state["weekly_plan_path"]).relative_to(base_path).as_posix(),
+                learning_unit_path=Path(state["learning_unit_path"]).relative_to(base_path).as_posix() if state.get("learning_unit_path") else "",
             )
             state["learning_progress_path"] = learning_progress_path.as_posix()
             state["learning_progress_week_id"] = progress_week.get("week_id", "")

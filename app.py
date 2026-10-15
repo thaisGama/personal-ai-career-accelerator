@@ -9,6 +9,7 @@ import streamlit as st
 from src.agent.learner_setup import load_learner_setup
 import src.agent.learning_check as learning_check
 from src.agent.tools import (
+    tool_generate_learning_unit_for_day,
     tool_mark_done,
     tool_select_quiz_tasks,
     tool_summarize_task_progress,
@@ -20,9 +21,16 @@ import src.agent.weekly_planner as weekly_planner
 from src.core.io.quiz_results_store import append_quiz_results
 from src.core.parsing.quiz_parsing import parse_questions, parse_quiz_sections
 from src.core.services.planner_service import run_weekly_planner_service
+from src.core.services.roadmap_context import (
+    day_status, days_in_week, learning_units, progress_summary, read_progress,
+    preserve_quiz_draft, quiz_day_identity, resolve_quiz_day, roadmap_weeks, saved_resource,
+    switch_roadmap, sync_quiz_context,
+)
 from src.core.services.quiz_service import (
+    evaluate_day_quiz_service,
     evaluate_quiz_service,
     generate_quiz_service,
+    generate_day_quiz_service,
     update_tasks_from_quiz_service,
 )
 
@@ -98,6 +106,140 @@ def _plan_markdown_for_display(markdown: str) -> str:
     return markdown
 
 
+def _roadmap_title(identifier: str) -> str:
+    try:
+        data = json.loads((BASE_DIR / "roadmaps" / f"{identifier}_roadmap.json").read_text(encoding="utf-8"))
+        return data.get("topic") or data.get("title") or data.get("goal") or identifier
+    except (OSError, ValueError, AttributeError):
+        return identifier
+
+
+def _week_label(week: dict) -> str:
+    number = week.get("week_number_global")
+    return f"Week {number}" if number is not None else "Week number unavailable"
+
+
+def _day_label(day: dict) -> str:
+    number = day.get("day_number")
+    return f"Day {number}" if number is not None else "Day number unavailable"
+
+
+def _saved_roadmap_ready(identifier: str, plan_path: Path) -> bool:
+    """Activate only a persisted roadmap with its exact saved plan and days."""
+    if identifier not in _saved_roadmaps(BASE_DIR) or not plan_path.is_file():
+        return False
+    try:
+        load_learner_setup(BASE_DIR, identifier)
+    except ValueError:
+        return False
+    weeks, error = read_progress(BASE_DIR)
+    return not error and any(
+        saved_resource(BASE_DIR, week.get("plan_path"), "weekly_plans") == plan_path.resolve()
+        and days_in_week(week)
+        for week in roadmap_weeks(weeks, identifier)
+    )
+
+
+def _unit_header(context: dict) -> None:
+    if not context:
+        st.caption("Roadmap / week / day context unavailable for this saved learning unit.")
+        return
+    week, day = context["week"], context["day"]
+    st.subheader(_roadmap_title(context["roadmap_id"]))
+    st.caption(f"{_week_label(week)} · {_day_label(day)}" if day is not None else f"{_week_label(week)} · Week overview")
+    if day is not None:
+        st.markdown(f"**Topic:** {day.get('topic') or 'Topic unavailable'}")
+        st.markdown(f"**Status:** {day_status(day)}")
+        if day.get("is_review"):
+            st.caption(f"Review day · Review of {day.get('review_of_day_id') or 'an earlier day'}")
+    else:
+        st.caption("Week-level material; completion is measured by individual day quizzes.")
+
+
+def _learning_unit_selected(options: dict, contexts: dict) -> None:
+    context = contexts.get(options.get(st.session_state.get("learning_unit_select")), {})
+    if context.get("day") is not None:
+        st.session_state["selected_learning_day"] = quiz_day_identity(context)
+    else:
+        st.session_state.pop("selected_learning_day", None)
+
+
+def _continue_learning(identifier: str, weeks: list[dict], units: dict, progress_error: str | None) -> None:
+    st.subheader(_roadmap_title(identifier))
+    st.caption("Your learning progress · A Day is a learning session.")
+    summary = progress_summary(weeks)
+    if progress_error:
+        st.info(progress_error)
+    elif not weeks or not summary["total"]:
+        st.info("Progress unavailable: no core days are reliably linked to this roadmap yet.")
+        st.caption("Generate a plan to save linked days. Historical material with unknown associations is not counted.")
+    else:
+        core_col, review_col = st.columns(2)
+        core_col.metric("Core days completed", f"{summary['completed']} of {summary['total']}")
+        review_col.metric("Review days completed", f"{summary['review_completed']} of {summary['review_total']}")
+        if summary["unknown"]:
+            st.info(f"Progress unavailable for {summary['unknown']} core day(s). A percentage cannot be shown reliably.")
+        else:
+            st.progress(summary["completed"] / summary["total"], text="Quiz-validated progress across saved core days")
+        st.caption("A day is completed only after its quiz is passed. Future unsaved weeks are not included; reviews are counted separately.")
+
+    recommended = summary["recommended"]
+    if recommended:
+        week, day = recommended
+        destination = f"{_week_label(week)}, {_day_label(day)}"
+        st.markdown(f"**{destination} — {day.get('topic') or 'Topic unavailable'}**")
+        if day_status(day) == "Needs review":
+            st.caption("Recommended next step: revisit this day before retrying its quiz.")
+        elif day.get("is_review"):
+            st.caption("Recommended next step: work through this review day.")
+        else:
+            st.caption("Recommended next step: continue this learning day.")
+        unit_path = saved_resource(BASE_DIR, day.get("learning_unit_path"), "docs/learning_units")
+        week_path = saved_resource(BASE_DIR, week.get("learning_unit_path"), "docs/learning_units")
+        target = unit_path if unit_path in units else week_path if week_path in units else None
+        if target:
+            label = f"Continue Learning — {destination}" if target == unit_path else f"Open {_week_label(week)} overview — {_day_label(day)} material not generated"
+            if st.button(label, type="primary", key="continue_learning"):
+                st.session_state["learning_unit_select"] = target.name
+                st.session_state["selected_learning_day"] = {"roadmap_id": identifier, "week_id": week.get("week_id"), "day_id": day.get("day_id")}
+                st.session_state["workspace_tab"] = "Learning Library"
+                st.rerun()
+        if unit_path not in units:
+            if st.button(f"Generate learning unit — {destination}", key="generate_day_unit", disabled=offline_mode or bool(setup_error) or not day.get("day_id")):
+                try:
+                    with st.spinner("Generating learning material..."):
+                        output = tool_generate_learning_unit_for_day(
+                            day_id=day["day_id"], base_dir=BASE_DIR, model=planner_model,
+                            preferences=preferences, target_level=learning_intensity, background=background,
+                        )
+                    st.session_state["learning_unit_select"] = Path(output["learning_unit_path"]).name
+                    st.session_state["selected_learning_day"] = {"roadmap_id": identifier, "week_id": week.get("week_id"), "day_id": day.get("day_id")}
+                    st.session_state["workspace_tab"] = "Learning Library"
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not generate learning material: {exc}")
+    elif summary["total"] and not summary["unknown"]:
+        if summary["review_completed"] == summary["review_total"]:
+            st.success("All linked core and review days have passed their quizzes.")
+
+    for week in weeks:
+        core_days = [d for d in days_in_week(week) if not d.get("is_review")]
+        completed = sum(day_status(d) == "Completed" for d in core_days)
+        current = recommended is not None and recommended[0] is week
+        with st.expander(f"{_week_label(week)} — {completed}/{len(core_days)} core days completed", expanded=current):
+            for day in days_in_week(week):
+                status = day_status(day)
+                icon = {"Completed": "✓", "Needs review": "↻", "Progress unavailable": "?"}.get(status, "○")
+                marker = " · Recommended next" if current and recommended[1] is day else ""
+                kind = " · Review day" if day.get("is_review") else ""
+                st.markdown(f"{icon} **{_day_label(day)} — {day.get('topic') or 'Topic unavailable'}** · {status}{kind}{marker}")
+                path = saved_resource(BASE_DIR, day.get("learning_unit_path"), "docs/learning_units")
+                material = "Available" if path in units else "Saved file missing or association unavailable" if day.get("learning_unit_path") else "Not generated"
+                st.caption(f"Learning material: {material}")
+                if day.get("is_review") and day.get("review_of_day_id"):
+                    st.caption(f"Review of {day['review_of_day_id']}")
+
+
 st.set_page_config(page_title="AI Career Accelerator", layout="wide")
 
 st.title("Personal AI Career Accelerator 🧠⚡")
@@ -119,6 +261,22 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# Apply queued navigation before creating the sidebar's keyed widgets.
+activated_roadmap = None
+pending_activation = st.session_state.pop("planner_pending_activation", None)
+if pending_activation:
+    pending_id = pending_activation["roadmap_id"]
+    pending_plan = Path(pending_activation["plan_path"])
+    if _saved_roadmap_ready(pending_id, pending_plan):
+        st.session_state["planner_route"] = "Use an existing roadmap"
+        st.session_state["planner_saved_roadmap"] = pending_id
+        switch_roadmap(st.session_state, pending_id, existing_mode=True)
+        st.session_state["weekly_plans_select"] = pending_plan
+        st.session_state["workspace_tab"] = "Progress Overview"
+        activated_roadmap = pending_id
+    else:
+        st.warning("The saved roadmap could not be activated. Your current selection was preserved.")
 
 with st.sidebar:
     st.header("Generate Plan inputs")
@@ -297,10 +455,12 @@ with st.sidebar:
         if skipped:
             st.info("Skipped:\n" + "\n".join(skipped))
 
+switch_roadmap(st.session_state, roadmap_id, existing_mode=existing_mode)
 planner_tab, plans_tab, roadmaps_tab, quiz_tab, library_tab = st.tabs(
-    ["Generate Plan", "View Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"]
+    ["Progress Overview", "View Plans", "Roadmaps", "Learning Check (Quiz)", "Learning Library"],
+    default=st.session_state.get("workspace_tab", "Progress Overview"),
 )
-# Roadmap browsing and planner selection are independent; generation requires a click.
+# The Roadmaps tab remains a browser; the planner selector sets workspace context.
 
 if clear:
     for key in [
@@ -356,10 +516,30 @@ if generate:
         # Update before View Plans instantiates its widget on this run.
         st.session_state["weekly_plans_select"] = saved_plan_path
         generation_succeeded = True
+        generated_roadmap_id = result.get("roadmap_id")
+        if not existing_mode and generated_roadmap_id and result.get("final_reason") in {None, "success"}:
+            if _saved_roadmap_ready(generated_roadmap_id, saved_plan_path):
+                st.session_state["planner_pending_activation"] = {
+                    "roadmap_id": generated_roadmap_id, "plan_path": str(saved_plan_path),
+                }
+                st.rerun()
+            else:
+                st.warning("The plan was saved, but roadmap activation is unavailable because its saved setup or linked days could not be verified.")
     except Exception as exc:
         st.error(f"Failed to generate plan: {exc}")
 
+all_progress_weeks, progress_error = read_progress(BASE_DIR)
+selected_progress_weeks = roadmap_weeks(all_progress_weeks, roadmap_id)
+library_units = learning_units(BASE_DIR, all_progress_weeks, roadmap_id)
+if existing_mode and not roadmap_id:
+    library_units = {}
+
 with planner_tab:
+    if activated_roadmap:
+        st.success("Roadmap saved and selected. Continue learning below; your weekly plan is available in View Plans.")
+    if roadmap_id:
+        _continue_learning(roadmap_id, selected_progress_weeks, library_units, progress_error)
+        st.divider()
     st.markdown("## Generate Plan")
 
     col_left, col_right = st.columns([2.5, 1], gap="large")
@@ -472,8 +652,8 @@ with planner_tab:
                     st.write(f"**Remaining hours:** {result.get('roadmap_remaining_hours')}")
 
                 with st.expander("Debug roadmap progress"):
-                    roadmap_id = result.get("roadmap_id") or ""
-                    st.write(f"**Roadmap ID:** `{roadmap_id}`")
+                    result_roadmap_id = result.get("roadmap_id") or ""
+                    st.write(f"**Roadmap ID:** `{result_roadmap_id}`")
                     st.write(f"**Current phase:** {result.get('roadmap_current_phase')}")
                     st.write(f"**Current milestone:** {result.get('roadmap_current_milestone')}")
                     st.write(f"**Week number:** {result.get('roadmap_week_number')}")
@@ -548,7 +728,13 @@ with plans_tab:
             st.warning(f"Could not read the selected weekly plan: {exc}")
             plan_md = ""
         st.markdown(_plan_markdown_for_display(plan_md))
-        if st.button("Load into Planner Preview", key="load_plan_into_preview"):
+        linked_plan = not roadmap_id or any(
+            saved_resource(BASE_DIR, week.get("plan_path"), "weekly_plans") == plan_path.resolve()
+            for week in selected_progress_weeks
+        )
+        if not linked_plan:
+            st.caption("This plan is not reliably linked to the active roadmap. Its planner preview is unavailable.")
+        if st.button("Load into Planner Preview", key="load_plan_into_preview", disabled=not linked_plan):
             st.session_state["planner_plan_md"] = plan_md
             st.session_state["planner_plan_path"] = plan_path.as_posix()
             st.session_state["planner_linkedin_md"] = ""
@@ -631,30 +817,55 @@ with roadmaps_tab:
 with quiz_tab:
     st.markdown("## Learning Check (Quiz)")
 
+    quiz_day, quiz_day_error = resolve_quiz_day(
+        all_progress_weeks, roadmap_id, st.session_state.get("selected_learning_day"),
+    )
+    sync_quiz_context(st.session_state, quiz_day, quiz_day_error)
+    if st.session_state.get("quiz_draft_notice"):
+        st.warning(st.session_state["quiz_draft_notice"])
+    drafts = st.session_state.get("saved_quiz_drafts", [])
+    if drafts:
+        with st.expander("Preserved previous quiz drafts and answers"):
+            st.caption("These drafts retain their original context and are not submitted for the current day.")
+            st.download_button("Download previous quiz drafts", json.dumps(drafts, ensure_ascii=False, indent=2),
+                               file_name="quiz_drafts.json", mime="application/json")
+            latest_answers = {k: v for k, v in drafts[-1].items() if k.startswith("quiz_answer_") or k == "quiz_answers_fallback"}
+            st.json(latest_answers)
+    if quiz_day_error:
+        st.warning(quiz_day_error)
+        st.session_state["quiz_topic"] = ""
+    if quiz_day:
+        _unit_header(quiz_day)
+        st.session_state["quiz_topic"] = quiz_day["day"]["topic"]
+
     # Initialize quiz-related state
     st.session_state.setdefault("quiz_unlocked", False)
 
     with st.container():
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        quiz_topic = st.text_input("Topic", value=st.session_state.get("quiz_topic", "Embeddings basics"), key="quiz_topic")
+        quiz_topic = st.text_input("Topic", value=st.session_state.get("quiz_topic", "Embeddings basics"), key="quiz_topic", disabled=bool(quiz_day) or bool(quiz_day_error))
         quiz_context = st.text_area(
             "Context / Notes (optional)",
             value=st.session_state.get("quiz_context", "Paste any notes or constraints to tailor the quiz."),
             height=120,
-            key="quiz_context",
+            key="quiz_context", disabled=bool(quiz_day) or bool(quiz_day_error),
         )
         use_tasks = st.checkbox("Use tasks.csv", value=st.session_state.get("quiz_use_tasks", False), key="quiz_use_tasks")
         quiz_roadmap_id = st.text_input(
             "Roadmap ID (optional)",
             value=st.session_state.get("quiz_roadmap_id", st.session_state.get("active_roadmap_id", "")),
             key="quiz_roadmap_id",
+            disabled=bool(roadmap_id),
         )
         quiz_model = st.text_input(
             "Model", value=getattr(learning_check, "DEFAULT_MODEL", "gpt-4.1-mini"), key="quiz_model"
         )
 
         col_q1, col_q2 = st.columns(2)
-        generate_quiz = col_q1.button("Generate quiz", type="primary", disabled=offline_mode)
+        generate_quiz = col_q1.button(
+            f"Generate quiz for {_day_label(quiz_day['day'])}" if quiz_day else "Generate quiz",
+            type="primary", disabled=offline_mode or bool(quiz_day_error),
+        )
         clear_quiz = col_q2.button("Clear quiz state")
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -662,6 +873,9 @@ with quiz_tab:
         for key in [
             "quiz_markdown",
             "quiz_path",
+            "quiz_binding",
+            "quiz_generation_topic",
+            "quiz_submitted_answers",
             "quiz_eval",
             "quiz_eval_block",
             "quiz_eval_score",
@@ -684,7 +898,7 @@ with quiz_tab:
     selected_tasks = []
     tasks_context = ""
     task_ids = []
-    if use_tasks:
+    if use_tasks and not quiz_day and not quiz_day_error:
         effective_quiz_roadmap_id = quiz_roadmap_id.strip() or None
         selection = tool_select_quiz_tasks(
             tasks_path=BASE_DIR / "data" / "tasks.csv",
@@ -708,6 +922,8 @@ with quiz_tab:
         st.session_state.pop("quiz_selected_tasks", None)
         st.session_state.pop("quiz_task_ids", None)
         st.session_state.pop("quiz_task_statuses", None)
+        if use_tasks and quiz_day:
+            st.caption("Task filtering is omitted: tasks.csv has no reliable day-level associations. This quiz uses the selected day's objectives and saved material.")
 
     if generate_quiz:
         if not quiz_topic.strip():
@@ -718,13 +934,19 @@ with quiz_tab:
                     combined_context = quiz_context
                     if tasks_context:
                         combined_context = f"{combined_context}\n\n{tasks_context}".strip()
-                    quiz_result = generate_quiz_service(
-                        topic=quiz_topic,
-                        context_text=combined_context,
-                        tasks=selected_tasks if selected_tasks else None,
-                        model=quiz_model,
-                        base_dir=BASE_DIR,
-                    )
+                    if quiz_day:
+                        identity = quiz_day_identity(quiz_day)
+                        quiz_result = generate_day_quiz_service(identity=identity, model=quiz_model, base_dir=BASE_DIR)
+                        st.session_state["selected_learning_day"] = identity
+                    else:
+                        quiz_result = generate_quiz_service(
+                            topic=quiz_topic, context_text=combined_context,
+                            tasks=selected_tasks if selected_tasks else None,
+                            model=quiz_model, base_dir=BASE_DIR,
+                        )
+                    preserve_quiz_draft(st.session_state)
+                    st.session_state["quiz_binding"] = quiz_result.get("binding")
+                    st.session_state["quiz_generation_topic"] = quiz_topic
                     st.session_state["quiz_markdown"] = quiz_result["quiz_markdown"]
                     st.session_state["quiz_path"] = quiz_result["quiz_path"]
                     st.success(f"Quiz saved to `{quiz_result['quiz_path']}`")
@@ -732,7 +954,9 @@ with quiz_tab:
                     for k in list(st.session_state.keys()):
                         if k.startswith("quiz_answer_"):
                             st.session_state.pop(k)
-                    st.session_state.pop("quiz_eval_block", None)
+                    for key in ("quiz_eval", "quiz_eval_block", "quiz_eval_score", "quiz_eval_mastery",
+                                "quiz_eval_decision", "quiz_submitted_answers", "quiz_task_update", "quiz_propose_done"):
+                        st.session_state.pop(key, None)
                 except Exception as exc:  # pragma: no cover - runtime path
                     st.error(f"Failed to generate quiz: {exc}")
 
@@ -830,7 +1054,7 @@ with quiz_tab:
         answers_payload = st.session_state.get("quiz_answers_fallback", "")
 
     st.markdown("### Submit answers")
-    evaluate_btn = st.button("Submit answers for evaluation", type="primary", disabled=offline_mode)
+    evaluate_btn = st.button("Submit answers for evaluation", type="primary", disabled=offline_mode or bool(quiz_day_error))
 
     if evaluate_btn:
         if not (quiz_md or "").strip():
@@ -840,19 +1064,28 @@ with quiz_tab:
         else:
             with st.spinner("Evaluating..."):
                 try:
-                    eval_result = evaluate_quiz_service(
-                        topic=quiz_topic,
-                        quiz_markdown=quiz_md,
-                        learner_answers=answers_payload,
-                        model=quiz_model,
-                    )
+                    binding = st.session_state.get("quiz_binding")
+                    if binding:
+                        eval_result = evaluate_day_quiz_service(
+                            binding=binding, quiz_markdown=quiz_md, learner_answers=answers_payload,
+                            model=quiz_model, base_dir=BASE_DIR,
+                        )
+                    else:
+                        eval_result = evaluate_quiz_service(
+                            topic=st.session_state.get("quiz_generation_topic", quiz_topic),
+                            quiz_markdown=quiz_md, learner_answers=answers_payload, model=quiz_model,
+                        )
                     st.session_state["quiz_eval"] = eval_result
+                    st.session_state["quiz_submitted_answers"] = {
+                        k: st.session_state[k] for k in list(st.session_state)
+                        if k.startswith("quiz_answer_") or k == "quiz_answers_fallback"
+                    }
                     st.session_state["quiz_eval_block"] = eval_result.get("eval_block")
                     st.session_state["quiz_eval_score"] = eval_result.get("score")
                     st.session_state["quiz_eval_mastery"] = eval_result.get("mastery")
                     st.session_state["quiz_eval_decision"] = eval_result.get("move_on_decision")
                     st.session_state["quiz_unlocked"] = True
-                    if use_tasks and st.session_state.get("quiz_task_ids"):
+                    if not binding and use_tasks and st.session_state.get("quiz_task_ids"):
                         task_ids_for_update = st.session_state.get("quiz_task_ids", [])
                         update_summary = update_tasks_from_quiz_service(
                             task_ids=task_ids_for_update,
@@ -866,6 +1099,8 @@ with quiz_tab:
                         st.session_state["quiz_propose_done"] = update_summary.get("propose_done", [])
                         st.session_state["quiz_task_statuses"] = update_summary.get("statuses", [])
                         append_quiz_results(quiz_results, base_dir=BASE_DIR)
+                    if binding:
+                        st.rerun()
                 except Exception as exc:  # pragma: no cover - runtime path
                     st.error(f"Failed to evaluate answers: {exc}")
 
@@ -932,23 +1167,59 @@ with library_tab:
         st.info("No learning units saved yet. Generate a weekly plan to create one.")
     else:
         files = sorted(
-            [path for path in library_dir.glob("*.md") if path.is_file()],
+            library_units,
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
         if not files:
-            st.info("No learning units found in docs/learning_units.")
+            if existing_mode and not roadmap_id:
+                st.info("Choose a saved roadmap to see its linked learning units.")
+            elif roadmap_id:
+                st.info("No learning units are reliably linked to this roadmap yet.")
+                st.caption("Units with unknown associations are available when browsing without a selected roadmap.")
+            else:
+                st.info("No learning units found in docs/learning_units.")
         else:
             options = {path.name: path for path in files}
-            refresh_token = st.session_state.get("learning_library_refresh", 0)
+            if st.session_state.get("learning_unit_select") not in options:
+                preferred = None
+                recommended = progress_summary(selected_progress_weeks)["recommended"]
+                if roadmap_id and recommended:
+                    week, day = recommended
+                    preferred = saved_resource(BASE_DIR, day.get("learning_unit_path"), "docs/learning_units")
+                    if preferred not in library_units:
+                        preferred = saved_resource(BASE_DIR, week.get("learning_unit_path"), "docs/learning_units")
+                st.session_state["learning_unit_select"] = (
+                    preferred.name if preferred in library_units else None if roadmap_id else next(iter(options))
+                )
+
+            def unit_label(name):
+                context = library_units[options[name]]
+                if not context:
+                    return f"{name} · Context unavailable"
+                week, day = context["week"], context["day"]
+                if day is None:
+                    return f"{_week_label(week)} · Week overview · {week.get('goal') or name}"
+                return f"{_week_label(week)} · {_day_label(day)} · {day.get('topic') or name} · {day_status(day)}"
+
             selected_name = st.selectbox(
                 "Choose a learning unit",
                 list(options.keys()),
-                key=f"learning_unit_select_{refresh_token}",
+                format_func=unit_label,
+                key="learning_unit_select",
+                index=None,
+                placeholder="Choose a learning unit",
+                on_change=_learning_unit_selected,
+                args=(options, library_units),
             )
             selected_path = options.get(selected_name)
             if selected_path:
-                content = selected_path.read_text(encoding="utf-8")
+                _unit_header(library_units[selected_path])
+                try:
+                    content = selected_path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    st.warning(f"Could not read this learning unit: {exc}")
+                    content = ""
                 title = None
                 for line in content.splitlines():
                     if line.startswith("# "):
