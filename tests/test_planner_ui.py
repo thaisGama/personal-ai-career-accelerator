@@ -329,6 +329,97 @@ def ui(tmp_path, monkeypatch):
     return at, calls, tmp_path
 
 
+@pytest.mark.parametrize("use_agent", [False, True])
+def test_generated_roadmap_opens_progress_once_with_saved_plan(ui, monkeypatch, use_agent):
+    from src.agent.learning_progress_store import append_week_from_plan
+
+    at, calls, root = ui
+    plan = root / "weekly_plans" / "fresh.md"
+    plan_md = "# Week 1\n\n## Micro tasks\n- **Day 1 (20 min): First topic**\n"
+
+    def generate(**kwargs):
+        calls.append(kwargs)
+        roadmap = json.loads((root / "roadmaps" / "alpha_roadmap.json").read_text())
+        roadmap["topic"] = "Fresh learning"
+        roadmap["learner_setup"]["goal"] = kwargs["goal"]
+        (root / "roadmaps" / "fresh_roadmap.json").write_text(json.dumps(roadmap))
+        plan.write_text(plan_md)
+        append_week_from_plan(
+            root / "data" / "learning_progress.json", plan_md,
+            roadmap_id="fresh", week_number_global=1, plan_path="weekly_plans/fresh.md",
+        )
+        return {"result": {"roadmap_id": "fresh", "plan_path": str(plan),
+                           **({"final_reason": "success"} if use_agent else {})},
+                "plan_md": plan_md, "linkedin_md": "Draft"}
+
+    monkeypatch.setattr(planner_service, "run_weekly_planner_service", generate)
+    widget(at, "text_input", "Goal / focus").set_value("Fresh learning")
+    at.checkbox(key="planner_use_agent").set_value(use_agent)
+    widget(at, "button", "Generate plan").click().run()
+    assert not at.exception and not at.error
+    assert len(calls) == 1 and calls[0]["use_agent_loop"] == use_agent
+    assert at.radio(key="planner_route").value == "Use an existing roadmap"
+    assert at.selectbox(key="planner_saved_roadmap").value == "fresh"
+    assert at.session_state["active_roadmap_id"] == "fresh"
+    assert at.session_state["workspace_roadmap_id"] == "fresh"
+    assert at.session_state["workspace_tab"] == "Progress Overview"
+    assert widget(at, "text_input", "Goal / focus").value == "Fresh learning"
+    assert widget(at, "text_input", "Goal / focus").disabled
+    assert widget(at, "button", "Generate learning unit — Week 1, Day 1")
+    assert widget(at, "metric", "Core days completed").value == "0 of 1"
+    assert at.selectbox(key="weekly_plans_select").value == plan
+    assert any("Roadmap saved and selected" in msg.value for msg in at.success)
+    assert "planner_result" not in at.session_state
+    assert "planner_pending_activation" not in at.session_state
+    assert sum(msg.value == plan_md.strip() for msg in at.markdown) == 1
+    at.run().run()
+    assert not at.exception and len(calls) == 1
+    assert at.selectbox(key="planner_saved_roadmap").value == "fresh"
+    assert at.selectbox(key="weekly_plans_select").value == plan
+
+
+@pytest.mark.parametrize("missing", ["roadmap", "progress"])
+def test_generation_does_not_activate_incompletely_saved_roadmap(ui, monkeypatch, missing):
+    at, calls, root = ui
+
+    def generate(**kwargs):
+        calls.append(kwargs)
+        plan = root / "weekly_plans" / "fresh.md"
+        plan.write_text("# Fresh plan")
+        return {"result": {"roadmap_id": "fresh" if missing == "roadmap" else "alpha",
+                           "plan_path": str(plan)}, "plan_md": "# Fresh plan"}
+
+    monkeypatch.setattr(planner_service, "run_weekly_planner_service", generate)
+    widget(at, "button", "Generate plan").click().run()
+    assert not at.exception
+    assert len(calls) == 1
+    assert at.radio(key="planner_route").value == "Start a new learning goal"
+    assert at.session_state["active_roadmap_id"] == ""
+    assert "planner_pending_activation" not in at.session_state
+    assert any("roadmap activation is unavailable" in msg.value for msg in at.warning)
+
+
+def test_generation_failure_keeps_existing_roadmap_active(ui, monkeypatch):
+    at, calls, root = ui
+    at.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    at.selectbox(key="planner_saved_roadmap").set_value("alpha").run()
+
+    def fail(**kwargs):
+        calls.append(kwargs)
+        raise RuntimeError("Provider unavailable")
+
+    monkeypatch.setattr(planner_service, "run_weekly_planner_service", fail)
+    widget(at, "button", "Generate plan").click().run()
+    assert not at.exception
+    assert any("Provider unavailable" in msg.value for msg in at.error)
+    assert at.radio(key="planner_route").value == "Use an existing roadmap"
+    assert at.selectbox(key="planner_saved_roadmap").value == "alpha"
+    assert at.session_state["active_roadmap_id"] == "alpha"
+    assert at.session_state["workspace_roadmap_id"] == "alpha"
+    assert "planner_pending_activation" not in at.session_state
+    assert len(calls) == 1
+
+
 def test_routes_browsing_and_exact_generated_plan(ui):
     at, calls, root = ui
     saved_content = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}

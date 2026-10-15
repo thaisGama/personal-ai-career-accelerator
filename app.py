@@ -124,6 +124,22 @@ def _day_label(day: dict) -> str:
     return f"Day {number}" if number is not None else "Day number unavailable"
 
 
+def _saved_roadmap_ready(identifier: str, plan_path: Path) -> bool:
+    """Activate only a persisted roadmap with its exact saved plan and days."""
+    if identifier not in _saved_roadmaps(BASE_DIR) or not plan_path.is_file():
+        return False
+    try:
+        load_learner_setup(BASE_DIR, identifier)
+    except ValueError:
+        return False
+    weeks, error = read_progress(BASE_DIR)
+    return not error and any(
+        saved_resource(BASE_DIR, week.get("plan_path"), "weekly_plans") == plan_path.resolve()
+        and days_in_week(week)
+        for week in roadmap_weeks(weeks, identifier)
+    )
+
+
 def _unit_header(context: dict) -> None:
     if not context:
         st.caption("Roadmap / week / day context unavailable for this saved learning unit.")
@@ -245,6 +261,22 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# Apply queued navigation before creating the sidebar's keyed widgets.
+activated_roadmap = None
+pending_activation = st.session_state.pop("planner_pending_activation", None)
+if pending_activation:
+    pending_id = pending_activation["roadmap_id"]
+    pending_plan = Path(pending_activation["plan_path"])
+    if _saved_roadmap_ready(pending_id, pending_plan):
+        st.session_state["planner_route"] = "Use an existing roadmap"
+        st.session_state["planner_saved_roadmap"] = pending_id
+        switch_roadmap(st.session_state, pending_id, existing_mode=True)
+        st.session_state["weekly_plans_select"] = pending_plan
+        st.session_state["workspace_tab"] = "Progress Overview"
+        activated_roadmap = pending_id
+    else:
+        st.warning("The saved roadmap could not be activated. Your current selection was preserved.")
 
 with st.sidebar:
     st.header("Generate Plan inputs")
@@ -484,6 +516,15 @@ if generate:
         # Update before View Plans instantiates its widget on this run.
         st.session_state["weekly_plans_select"] = saved_plan_path
         generation_succeeded = True
+        generated_roadmap_id = result.get("roadmap_id")
+        if not existing_mode and generated_roadmap_id and result.get("final_reason") in {None, "success"}:
+            if _saved_roadmap_ready(generated_roadmap_id, saved_plan_path):
+                st.session_state["planner_pending_activation"] = {
+                    "roadmap_id": generated_roadmap_id, "plan_path": str(saved_plan_path),
+                }
+                st.rerun()
+            else:
+                st.warning("The plan was saved, but roadmap activation is unavailable because its saved setup or linked days could not be verified.")
     except Exception as exc:
         st.error(f"Failed to generate plan: {exc}")
 
@@ -494,6 +535,8 @@ if existing_mode and not roadmap_id:
     library_units = {}
 
 with planner_tab:
+    if activated_roadmap:
+        st.success("Roadmap saved and selected. Continue learning below; your weekly plan is available in View Plans.")
     if roadmap_id:
         _continue_learning(roadmap_id, selected_progress_weeks, library_units, progress_error)
         st.divider()
