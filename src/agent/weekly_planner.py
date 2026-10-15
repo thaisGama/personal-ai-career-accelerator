@@ -393,6 +393,13 @@ def call_llm(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
 
+    token_limit = max_tokens or MAX_TOKENS
+    if model == "gpt-6-luna":
+        # Luna permits temperature with reasoning disabled; retain the caller's budget.
+        model_params = {"reasoning_effort": "none", "max_completion_tokens": token_limit}
+    else:
+        model_params = {"max_tokens": token_limit}
+
     try:
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
@@ -401,8 +408,8 @@ def call_llm(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=max_tokens or MAX_TOKENS,
             temperature=temperature,
+            **model_params,
         )
     except Exception as exc:  # pragma: no cover - network/API path
         raise RuntimeError(f"Failed to call OpenAI chat completion: {exc}") from exc
