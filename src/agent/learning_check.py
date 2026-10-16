@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from .prompts import render_prompt
+from .learning_purpose import purpose_context
 from .weekly_planner import DEFAULT_MODEL, call_llm, extract_between
 
 QUIZ_GENERATION_SYSTEM_PROMPT = render_prompt("quiz.system")
@@ -119,6 +120,7 @@ def evaluate_micro_quiz(
     quiz_markdown: str,
     learner_answers: str,
     model: str = DEFAULT_MODEL,
+    learner_setup: dict | None = None,
 ) -> Dict[str, object]:
     """
     Evaluate learner answers against the quiz answer key.
@@ -129,6 +131,7 @@ def evaluate_micro_quiz(
         quiz_markdown=quiz_markdown,
         learner_answers=learner_answers.strip() if learner_answers else 'No answers provided.',
     )
+    user_prompt += purpose_context(learner_setup)
     raw_eval = call_llm(QUIZ_EVALUATION_SYSTEM_PROMPT, user_prompt, model=model)
     eval_block = extract_between(raw_eval, "<<EVAL>>", "<<END_EVAL>>")
     eval_block = eval_block if eval_block.strip() else raw_eval.strip()

@@ -5,6 +5,10 @@ small loader uses UTF-8 files and Python named formatting; there is no registry
 service, prompt framework, evaluation runner, or reporting dependency. This is
 PR 2 (#18), independent of the deferred PR 1 evaluation baseline.
 
+PR 3 adds purpose-aware composition and five new template IDs; see
+[Learning Purpose MVP](learning_purpose.md) for selection, propagation, and
+legacy behavior. All original PR 2 template files remain unchanged.
+
 ## Production inventory
 
 Inventoried against `5f399f0` before extraction. IDs below map to paths by replacing
@@ -100,6 +104,8 @@ trace changes are implemented here.
 
 `tests/fixtures/prompts/production_requests.json` was captured from the original
 production builders and mocked LLM calls at `5f399f0` **before extraction**.
+PR 3 intentionally updates the two roadmap snapshots for purpose-aware selection;
+the other 18 scenarios retain their original text.
 `tests/test_prompt_snapshots.py` compares 20 scenarios covering populated/empty
 context, task focus, custom role, roadmap schema, controller state and JSON repair,
 critic registry present/absent, weekly generation and quality repair, day units,

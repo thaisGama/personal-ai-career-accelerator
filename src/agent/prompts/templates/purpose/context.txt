@@ -1,0 +1,11 @@
+
+
+LEARNING PURPOSE: {purpose}
+Learner goal: {goal}
+{instructions}
+
+CONFIGURED TIME LIMITS
+Available weekly time: {hours_per_week} hours.
+Maximum session length: {max_session_minutes} minutes.
+These explicit limits and the selected purpose take precedence over generic roles, example durations, fixed day counts, or suggested timeboxes elsewhere in the prompt. Weekly learning days must total no more than the available weekly minutes, and each day must fit the maximum session length. Split exercises and projects into sessions within that limit; reduce scope rather than increasing the budget.
+Keep the roadmap -> week -> day -> learning unit -> quiz -> progress workflow. A narrow goal can have a short roadmap with a single phase and milestone; do not skip the roadmap. For day units and quizzes, assess only the current day's objectives and material in the context of this purpose. Keep the required output tags, schemas, grading rules, and roadmap/day associations unchanged.

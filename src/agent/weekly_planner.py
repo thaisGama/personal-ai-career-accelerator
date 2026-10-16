@@ -11,7 +11,8 @@ from typing import Optional, Tuple
 from openai import OpenAI
 
 from .prompts import render_prompt
-from .learning_progress_store import append_week_from_plan, resolve_learning_progress_path
+from .learning_progress_store import append_week_from_plan, parse_days_from_plan, resolve_learning_progress_path
+from .learning_purpose import purpose_context
 from .memory.vector_store import LocalVectorStore
 from .task_store import TaskProgressSummary, load_tasks, summarize_task_progress, upsert_tasks_from_plan
 
@@ -36,6 +37,7 @@ def build_weekly_planner_prompt(
     week_number: int | None = None,
     target_level: str | None = None,
     background: str | None = None,
+    learner_setup: dict | None = None,
 ) -> Tuple[str, str]:
     """Construct system and user prompts for the weekly planner agent."""
     # Plan prompt stays compact; learning unit has its own dedicated prompt.
@@ -89,7 +91,7 @@ def build_weekly_planner_prompt(
         roadmap_block=roadmap_block,
     )
 
-    return system_prompt, user_prompt
+    return system_prompt, user_prompt + purpose_context(learner_setup)
 
 
 def build_learning_unit_prompt(
@@ -102,9 +104,10 @@ def build_learning_unit_prompt(
     target_level: str | None = None,
     background: str | None = None,
     target_role: str | None = None,
+    learner_setup: dict | None = None,
 ) -> Tuple[str, str]:
     """Construct system and user prompts for the learning unit generator."""
-    effective_role = target_role or "AI Engineer / AI Generalist"
+    effective_role = target_role or (learner_setup["goal"] if learner_setup else "AI Engineer / AI Generalist")
     system_prompt = render_prompt("learning_unit.system")
 
     roadmap_line = f"Roadmap tags from the plan: {roadmap_tags}" if roadmap_tags else "Roadmap tags from the plan: none"
@@ -123,7 +126,7 @@ def build_learning_unit_prompt(
         memory_context=memory_context or 'none',
     )
 
-    return system_prompt, user_prompt
+    return system_prompt, user_prompt + purpose_context(learner_setup)
 
 
 def call_llm(
@@ -611,6 +614,7 @@ def generate_weekly_plan_and_learning_unit(
     target_level: str | None = None,
     background: str | None = None,
     model: str = DEFAULT_MODEL,
+    learner_setup: dict | None = None,
 ) -> dict:
     """Generate the weekly plan and learning unit via separate LLM calls."""
     plan_system_prompt, plan_user_prompt = build_weekly_planner_prompt(
@@ -628,6 +632,7 @@ def generate_weekly_plan_and_learning_unit(
         week_number=week_number,
         target_level=target_level,
         background=background,
+        learner_setup=learner_setup,
     )
 
     raw_plan_output = call_llm(
@@ -647,6 +652,15 @@ def generate_weekly_plan_and_learning_unit(
     plan_markdown, linkedin_markdown = split_markdown_into_plan_and_linkedin(formatted_markdown)
     plan_markdown = remove_duplicate_daily_breakdown_sections(plan_markdown)
 
+    if learner_setup is not None:
+        days = parse_days_from_plan(plan_markdown)
+        if not days or any(day["estimated_minutes"] <= 0 for day in days):
+            raise ValueError("Weekly plan must include learning days with explicit durations.")
+        if any(day["estimated_minutes"] > max_session_minutes for day in days):
+            raise ValueError("Weekly plan exceeds the configured maximum session length.")
+        if sum(day["estimated_minutes"] for day in days) > time_per_week_hours * 60:
+            raise ValueError("Weekly plan exceeds the configured weekly time budget.")
+
     roadmap_tags = _extract_roadmap_tags(plan_markdown)
     plan_context = _truncate_text(plan_markdown, max_chars=1400)
     unit_system_prompt, unit_user_prompt = build_learning_unit_prompt(
@@ -658,6 +672,7 @@ def generate_weekly_plan_and_learning_unit(
         plan_context=render_prompt("learning_unit.plan_excerpt", plan_context=plan_context),
         target_level=target_level,
         background=background,
+        learner_setup=learner_setup,
     )
 
     raw_learning_unit_output = call_llm(
@@ -718,8 +733,8 @@ def generate_and_save_week(
     base_dir: Path | str = ".",
 ) -> dict:
     """High-level orchestrator that builds prompts, calls the LLM, splits, and saves files."""
-    from .learner_setup import make_learner_setup
-    learner_setup = learner_setup or make_learner_setup(
+    from .learner_setup import make_learner_setup, validate_learner_setup
+    learner_setup = validate_learner_setup(learner_setup) if learner_setup is not None else make_learner_setup(
         goal=goal, background=background or "", preferences=preferences or "",
         hours_per_week=time_per_week_hours, max_session_minutes=max_session_minutes,
         learning_intensity=target_level or "medium",
@@ -782,6 +797,7 @@ def generate_and_save_week(
             goal=goal,
             base_dir=Path(base_dir),
             roadmap_id=roadmap_id,
+            learning_purpose=learner_setup["learning_purpose"],
             force_regenerate=False,
         )
         if load_result.get("error"):
@@ -805,6 +821,7 @@ def generate_and_save_week(
             effective_roadmap_id = roadmap_result.get("roadmap_id") or ""
 
     if roadmap:
+        learner_setup = validate_learner_setup(roadmap.get("learner_setup"))
         effective_roadmap_id = effective_roadmap_id or tools_module._infer_roadmap_id(goal, roadmap_id, roadmap_path)
         progress = tools_module._compute_roadmap_progress(
             roadmap, load_tasks(tasks_path), time_per_week_hours, effective_roadmap_id
@@ -847,6 +864,7 @@ def generate_and_save_week(
         target_level=target_level,
         background=background,
         model=model,
+        learner_setup=learner_setup,
     )
     plan_markdown = generation["plan_markdown"]
     linkedin_markdown = generation["linkedin_markdown"]
