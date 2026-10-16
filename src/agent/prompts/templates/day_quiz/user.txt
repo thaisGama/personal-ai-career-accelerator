@@ -1,0 +1,6 @@
+Topic: {topic}
+Generate a quiz for this exact Day. Base questions primarily on the learning unit content when it is available. Assess only this day's objectives; the week goal is background, not quiz scope.
+
+{context_text}
+
+Generate the quiz now.

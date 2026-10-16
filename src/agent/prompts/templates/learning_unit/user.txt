@@ -1,0 +1,15 @@
+Goal for the week: {goal}
+Target role: {effective_role}
+Learning intensity: {target_level}
+Background / constraints: {background}
+Preferences: {preferences}
+{roadmap_line}
+
+Current roadmap milestone context (use for the title and worked examples):
+{roadmap_context_block}
+
+Use this context to anchor at least one worked example to the user's goal or roadmap milestone:
+{plan_context_block}
+
+Additional memory context (if relevant):
+{memory_context}

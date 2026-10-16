@@ -1,0 +1,3 @@
+{unit_user_prompt}
+
+QUALITY FIX REQUIRED: Fix these issues: {issues}. Add a decision lens, worked examples, an exercise, and a self-check rubric.

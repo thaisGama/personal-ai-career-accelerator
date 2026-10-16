@@ -1,0 +1,7 @@
+Generate a learning unit for exactly this day, not the full week.
+Week title: {title}
+Week goal: {goal}
+Day ID: {day_id}
+Day number: {day_number}
+Day topic: {topic}
+Estimated minutes: {estimated_minutes}{review_context}

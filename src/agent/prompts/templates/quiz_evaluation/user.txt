@@ -1,0 +1,7 @@
+Topic: {topic}
+Here is the quiz (with answer key and rubric):
+{quiz_markdown}
+
+Learner answers:
+{learner_answers}
+Return ONLY the evaluation block.

@@ -1,0 +1,3 @@
+Schema: {{"action":"tool","tool_name":"...","args":{{...}}}} or {{"action":"final","result":{{...}}}}.
+Invalid response error: {error}
+Return a valid JSON object now.

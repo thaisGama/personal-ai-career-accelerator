@@ -8,52 +8,12 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, Optional
 
+from .prompts import render_prompt
 from .weekly_planner import DEFAULT_MODEL, call_llm, extract_between
 
-QUIZ_GENERATION_SYSTEM_PROMPT = """You are a concise learning coach. Generate a 5–7 minute micro-quiz (5 questions) for the given topic.
-Return ONLY the quiz content using the exact tag structure below so it can be parsed reliably.
+QUIZ_GENERATION_SYSTEM_PROMPT = render_prompt("quiz.system")
 
-Required format (no extra text):
-<<QUIZ>>
-<friendly title for the quiz>
-
-Questions (mix of short answer + 1–2 multiple choice):
-- Q1) ...
-- Q2) ...
-- Q3) ...
-- Q4) ...
-- Q5) ...
-<<ANSWER_KEY>>
-- Q1: <succinct correct answer or bullet hints>
-- Q2: ...
-- Q3: ...
-- Q4: ...
-- Q5: ...
-<<RUBRIC>>
-- What "excellent" looks like: <1–2 bullets>
-- What "acceptable" looks like: <1–2 bullets>
-- What "needs work" looks like: <1–2 bullets>
-<<FOLLOW_UP>>
-- If score <= 6/10: <brief practice activity>
-- If score > 6/10: <slightly harder follow-up task>
-"""
-
-QUIZ_EVALUATION_SYSTEM_PROMPT = """You are a strict yet supportive grader. Compare the provided quiz answer key with the learner's answers.
-Return ONLY the evaluation block using the exact format below:
-
-<<EVAL>>
-- Score: X/10
-- Mastery: LOW|DEVELOPING|SOLID
-- Strong areas: <short description>
-- Weak areas: <short description>
-- Next practice (10–15 min): <one concrete practice task>
-- Move-on decision: MOVE_ON|REPEAT
-<<END_EVAL>>
-
-Rules:
-- Score 0–10 with partial credit.
-- Map mastery: 0–4 -> LOW, 5–7 -> DEVELOPING, 8–10 -> SOLID.
-- MOVE_ON only if SOLID and strong alignment with answer key; otherwise REPEAT with a focused practice suggestion."""
+QUIZ_EVALUATION_SYSTEM_PROMPT = render_prompt("quiz_evaluation.system")
 
 
 def slugify(text: str) -> str:
@@ -109,18 +69,16 @@ def generate_micro_quiz(
         lines = []
         for task in tasks:
             lines.append(f"- {task.get('task_id')}: {task.get('title')} ({task.get('topic')})")
-        tasks_block = (
-            "\nFocus the quiz on these tasks and include the TaskID tag in each question "
-            "like [task_id:XYZ]:\n"
-            + "\n".join(lines)
-            + "\n"
+        tasks_block = render_prompt(
+            "quiz.task_focus",
+            tasks='\n'.join(lines),
         )
 
-    user_prompt = (
-        f"Topic: {topic.strip()}\n"
-        f"Context/notes (may be empty):\n{context_text.strip() if context_text else 'None provided.'}\n"
-        f"{tasks_block}"
-        "Generate the quiz now."
+    user_prompt = render_prompt(
+        "quiz.user",
+        topic=topic.strip(),
+        context_text=context_text.strip() if context_text else 'None provided.',
+        tasks_block=tasks_block,
     )
     quiz_markdown = call_llm(QUIZ_GENERATION_SYSTEM_PROMPT, user_prompt, model=model)
     quiz_markdown = quiz_markdown.strip()
@@ -165,13 +123,11 @@ def evaluate_micro_quiz(
     """
     Evaluate learner answers against the quiz answer key.
     """
-    user_prompt = (
-        f"Topic: {topic.strip()}\n"
-        "Here is the quiz (with answer key and rubric):\n"
-        f"{quiz_markdown}\n\n"
-        "Learner answers:\n"
-        f"{learner_answers.strip() if learner_answers else 'No answers provided.'}\n"
-        "Return ONLY the evaluation block."
+    user_prompt = render_prompt(
+        "quiz_evaluation.user",
+        topic=topic.strip(),
+        quiz_markdown=quiz_markdown,
+        learner_answers=learner_answers.strip() if learner_answers else 'No answers provided.',
     )
     raw_eval = call_llm(QUIZ_EVALUATION_SYSTEM_PROMPT, user_prompt, model=model)
     eval_block = extract_between(raw_eval, "<<EVAL>>", "<<END_EVAL>>")

@@ -1,0 +1,2 @@
+# This prompt preserves Markdown hard-break spaces from the original Python string.
+src/agent/prompts/templates/weekly_plan/system.txt whitespace=-blank-at-eol

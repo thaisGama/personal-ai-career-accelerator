@@ -1,0 +1,4 @@
+Topic: {topic}
+Context/notes (may be empty):
+{context_text}
+{tasks_block}Generate the quiz now.

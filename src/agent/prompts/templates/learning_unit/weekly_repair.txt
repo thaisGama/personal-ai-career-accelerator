@@ -1,0 +1,3 @@
+{unit_user_prompt}
+
+QUALITY FIX REQUIRED: Fix these issues: {issues}. Define missing terms before use: {missing_definitions}. Ensure examples progress baseline -> structured -> constrained + evaluation. Add an exercise and self-check rubric.

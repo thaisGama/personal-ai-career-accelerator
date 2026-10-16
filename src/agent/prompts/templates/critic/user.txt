@@ -1,0 +1,14 @@
+Misbehaviors registry:
+{misbehaviors_text}
+
+Weekly plan:
+{weekly_plan_md}
+
+Return ONLY this block:
+<<CRITIC_REPORT>>
+Status: PASS | FAIL
+Violations:
+- [AMR-XXX] ...
+Patch list:
+- ...
+<<END_CRITIC_REPORT>>

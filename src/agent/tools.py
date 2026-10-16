@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
+from .prompts import render_prompt
 from .learner_setup import validate_learner_setup
 from .memory.vector_store import LocalVectorStore
 from .weekly_planner import (
@@ -108,7 +109,7 @@ def tool_generate_weekly_plan(
     memory_context_prompt = (
         memory_context
         if memory_context.strip()
-        else "There is no relevant past memory yet. Plan as if this is the first week.\n"
+        else render_prompt("weekly_plan.no_memory")
     )
     memory_used = bool(audit.get("memory_used"))
     memory_source = (Path(base_dir) / "data" / "memory_vectors.json").as_posix()
@@ -687,76 +688,12 @@ def tool_generate_learning_roadmap(
 ) -> Dict[str, Any]:
     """Generate and save a multi-week learning roadmap for the goal."""
     learner_setup = validate_learner_setup(learner_setup)
-    system_prompt = (
-        "You are a senior curriculum designer for modern AI Engineers. Create a structured learning roadmap.\n"
-        "Return ONLY strict JSON wrapped between the tags:\n"
-        "<<ROADMAP_JSON>>\n{...}\n<<END_ROADMAP_JSON>>\n"
-        "No extra text before or after the tags.\n"
-        "The roadmap must include hands-on deliverables and practice items.\n"
-        "MANDATORY AI ENGINEER SPINE (must appear as milestones across phases):\n"
-        "- Foundations: LLM mental models and prompt/tool fundamentals\n"
-        "- Embeddings and similarity search\n"
-        "- Vector search + index tuning\n"
-        "- Chunking strategies + document preparation\n"
-        "- RAG pipelines (retrieval + grounding)\n"
-        "- RAG evaluation (quality, latency, regressions)\n"
-        "- Agents and tool use (planning, tool routing, guardrails)\n"
-        "- Production concerns (latency, cost, monitoring, safety)\n"
-        "- Portfolio project (end-to-end AI engineer artifact)\n"
-        "RESOURCE POLICY FOR ROADMAPS\n"
-        "- Milestones and suggested practice must NOT depend on paid resources.\n"
-        "- Prefer:\n"
-        "  - agent-generated explanations and exercises\n"
-        "  - free, named online resources (docs, blogs, open-source tutorials)\n"
-        "- If a paid resource (book/course) is mentioned:\n"
-        "  - it must be explicitly labeled as OPTIONAL\n"
-        "  - it must not be required to satisfy any definition_of_done\n"
-        "Use realistic hour estimates and keep the scope professional and complete."
-    )
-    user_prompt = (
-        f"Goal: {goal}\n"
-        f"Target intensity: {target_level}\n"
-        f"Background/constraints: {background or 'none'}\n\n"
-        "Milestone resources rules:\n"
-        "- Include 0-2 optional FREE resources per milestone.\n"
-        "- Each resource must include title, owner, platform, and a search_phrase.\n"
-        "- Avoid generic titles like \"Beginner's guide to AI\".\n\n"
-        "Return JSON that matches this exact schema:\n"
-        "{\n"
-        '  "topic": "string",\n'
-        '  "target_level": "light|medium|hardcore",\n'
-        '  "total_estimated_hours": number,\n'
-        '  "estimated_weeks_at_hours_per_week": { "2": number, "5": number, "7": number },\n'
-        '  "prerequisites": ["string", ...],\n'
-        '  "phases": [\n'
-        "    {\n"
-        '      "phase_id": "P1",\n'
-        '      "title": "string",\n'
-        '      "estimated_hours": number,\n'
-        '      "outcomes": ["string", ...],\n'
-        '      "milestones": [\n'
-        "        {\n"
-        '          "milestone_id": "M1.1",\n'
-        '          "title": "string",\n'
-        '          "estimated_hours": number,\n'
-        '          "definition_of_done": ["string", ...],\n'
-        '          "deliverables": ["string", ...],\n'
-        '          "depth": "intro|operational",\n'
-        '          "suggested_practice": ["string", ...],\n'
-        '          "resources": [\n'
-        "            {\n"
-        '              "title": "string",\n'
-        '              "owner": "string",\n'
-        '              "platform": "string",\n'
-        '              "search_phrase": "string"\n'
-        "            }\n"
-        "          ]\n"
-        "        }\n"
-        "      ]\n"
-        "    }\n"
-        "  ],\n"
-        '  "completion_criteria": ["string", ...]\n'
-        "}"
+    system_prompt = render_prompt("roadmap.system")
+    user_prompt = render_prompt(
+        "roadmap.user",
+        goal=goal,
+        target_level=target_level,
+        background=background or 'none',
     )
 
     try:
@@ -908,29 +845,30 @@ def tool_generate_learning_unit_for_day(
     progress = load_learning_progress(progress_path)
     week, day = find_week_and_day(progress, day_id)
 
-    roadmap_context = (
-        f"Roadmap: {week.get('roadmap_id') or 'not provided'}\n"
-        f"Phase: {week.get('phase_id') or 'not provided'}\n"
-        f"Milestone: {week.get('milestone_id') or 'not provided'}"
+    roadmap_context = render_prompt(
+        "day_learning_unit.roadmap_context",
+        roadmap_id=week.get('roadmap_id') or 'not provided',
+        phase_id=week.get('phase_id') or 'not provided',
+        milestone_id=week.get('milestone_id') or 'not provided',
     )
     review_context = ""
     if day.get("is_review"):
-        review_context = (
-            "\nReview context:\n"
-            f"- Review of day: {day.get('review_of_day_id') or 'not provided'}\n"
-            f"- Review reason: {day.get('review_reason') or 'not provided'}\n"
-            f"- Prior quiz result: {day.get('quiz_result') or 'not provided'}\n"
-            f"- Reflection: {day.get('reflection') or 'not provided'}"
+        review_context = render_prompt(
+            "day_learning_unit.review_context",
+            review_of_day_id=day.get('review_of_day_id') or 'not provided',
+            review_reason=day.get('review_reason') or 'not provided',
+            quiz_result=day.get('quiz_result') or 'not provided',
+            reflection=day.get('reflection') or 'not provided',
         )
-    plan_context = (
-        f"Generate a learning unit for exactly this day, not the full week.\n"
-        f"Week title: {week.get('title') or ''}\n"
-        f"Week goal: {week.get('goal') or ''}\n"
-        f"Day ID: {day.get('day_id')}\n"
-        f"Day number: {day.get('day_number')}\n"
-        f"Day topic: {day.get('topic')}\n"
-        f"Estimated minutes: {day.get('estimated_minutes') or 0}"
-        f"{review_context}"
+    plan_context = render_prompt(
+        "day_learning_unit.plan_context",
+        title=week.get('title') or '',
+        goal=week.get('goal') or '',
+        day_id=day.get('day_id'),
+        day_number=day.get('day_number'),
+        topic=day.get('topic'),
+        estimated_minutes=day.get('estimated_minutes') or 0,
+        review_context=review_context,
     )
     unit_system_prompt, unit_user_prompt = build_learning_unit_prompt(
         goal=str(day.get("topic") or week.get("goal") or "Learning day"),
@@ -955,10 +893,10 @@ def tool_generate_learning_unit_for_day(
 
     quality = check_learning_unit_quality(learning_unit_md)
     if not quality.get("ok"):
-        retry_prompt = (
-            f"{unit_user_prompt}\n\nQUALITY FIX REQUIRED: Fix these issues: "
-            f"{', '.join(quality.get('issues', []))}. "
-            "Add a decision lens, worked examples, an exercise, and a self-check rubric."
+        retry_prompt = render_prompt(
+            "learning_unit.day_repair",
+            unit_user_prompt=unit_user_prompt,
+            issues=', '.join(quality.get('issues', [])),
         )
         raw_output = call_llm(
             system_prompt=unit_system_prompt,
@@ -1003,26 +941,24 @@ def tool_generate_quiz_for_day(
 
     learning_unit_text = _read_relative_text(base_dir, str(day.get("learning_unit_path") or ""))
     topic = str(day.get("topic") or "Learning day")
-    context_text = (
-        f"Day ID: {day.get('day_id')}\n"
-        f"Day number: {day.get('day_number')}\n"
-        f"Day topic: {topic}\n"
-        f"Day learning objectives: {day.get('learning_objectives') or day.get('objectives') or topic}\n"
-        f"Estimated minutes: {day.get('estimated_minutes') or 0}\n\n"
-        f"Week title: {week.get('title') or ''}\n"
-        f"Week goal: {week.get('goal') or ''}\n"
-        f"Roadmap: {week.get('roadmap_id') or 'not provided'}\n"
-        f"Phase: {week.get('phase_id') or 'not provided'}\n"
-        f"Milestone: {week.get('milestone_id') or 'not provided'}\n\n"
-        "Learning unit content:\n"
-        f"{learning_unit_text.strip() if learning_unit_text.strip() else 'No learning unit content available.'}"
+    context_text = render_prompt(
+        "day_quiz.context",
+        day_id=day.get('day_id'),
+        day_number=day.get('day_number'),
+        topic=topic,
+        learning_objectives=day.get('learning_objectives') or day.get('objectives') or topic,
+        estimated_minutes=day.get('estimated_minutes') or 0,
+        title=week.get('title') or '',
+        goal=week.get('goal') or '',
+        roadmap_id=week.get('roadmap_id') or 'not provided',
+        phase_id=week.get('phase_id') or 'not provided',
+        milestone_id=week.get('milestone_id') or 'not provided',
+        learning_unit_text=learning_unit_text.strip() if learning_unit_text.strip() else 'No learning unit content available.',
     )
-    user_prompt = (
-        f"Topic: {topic}\n"
-        "Generate a quiz for this exact Day. Base questions primarily on the learning unit content "
-        "when it is available. Assess only this day's objectives; the week goal is background, not quiz scope.\n\n"
-        f"{context_text}\n\n"
-        "Generate the quiz now."
+    user_prompt = render_prompt(
+        "day_quiz.user",
+        topic=topic,
+        context_text=context_text,
     )
     quiz_markdown = call_llm(
         system_prompt=QUIZ_GENERATION_SYSTEM_PROMPT,

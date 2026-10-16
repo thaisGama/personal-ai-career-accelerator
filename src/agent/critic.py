@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .prompts import render_prompt
 from .weekly_planner import call_llm
 
 
@@ -64,24 +65,12 @@ def run_plan_critic(weekly_plan_md: str, base_dir: Path, model: str) -> Dict[str
     if misbehaviors_path.exists():
         misbehaviors_text = misbehaviors_path.read_text(encoding="utf-8")
 
-    system_prompt = (
-        "You are a strict read-only plan critic. Review the plan for violations of the "
-        "misbehaviors registry. Do NOT rewrite the plan. Output only the report block."
+    system_prompt = render_prompt("critic.system")
+    user_prompt = render_prompt(
+        "critic.user",
+        misbehaviors_text=misbehaviors_text or 'None provided.',
+        weekly_plan_md=weekly_plan_md,
     )
-    user_prompt = f"""Misbehaviors registry:
-{misbehaviors_text or "None provided."}
-
-Weekly plan:
-{weekly_plan_md}
-
-Return ONLY this block:
-<<CRITIC_REPORT>>
-Status: PASS | FAIL
-Violations:
-- [AMR-XXX] ...
-Patch list:
-- ...
-<<END_CRITIC_REPORT>>"""
 
     raw_output = call_llm(
         system_prompt=system_prompt,

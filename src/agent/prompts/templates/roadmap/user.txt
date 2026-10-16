@@ -1,0 +1,45 @@
+Goal: {goal}
+Target intensity: {target_level}
+Background/constraints: {background}
+
+Milestone resources rules:
+- Include 0-2 optional FREE resources per milestone.
+- Each resource must include title, owner, platform, and a search_phrase.
+- Avoid generic titles like "Beginner's guide to AI".
+
+Return JSON that matches this exact schema:
+{{
+  "topic": "string",
+  "target_level": "light|medium|hardcore",
+  "total_estimated_hours": number,
+  "estimated_weeks_at_hours_per_week": {{ "2": number, "5": number, "7": number }},
+  "prerequisites": ["string", ...],
+  "phases": [
+    {{
+      "phase_id": "P1",
+      "title": "string",
+      "estimated_hours": number,
+      "outcomes": ["string", ...],
+      "milestones": [
+        {{
+          "milestone_id": "M1.1",
+          "title": "string",
+          "estimated_hours": number,
+          "definition_of_done": ["string", ...],
+          "deliverables": ["string", ...],
+          "depth": "intro|operational",
+          "suggested_practice": ["string", ...],
+          "resources": [
+            {{
+              "title": "string",
+              "owner": "string",
+              "platform": "string",
+              "search_phrase": "string"
+            }}
+          ]
+        }}
+      ]
+    }}
+  ],
+  "completion_criteria": ["string", ...]
+}}

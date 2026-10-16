@@ -56,6 +56,9 @@ This is a **multi-component AI system**, not just a prompt.
 
 All outputs are saved as structured Markdown files.
 
+LLM templates, their stable IDs, versions, and editing conventions are documented
+in [Prompt management](docs/prompt_management.md).
+
 ---
 
 ## 🧪 Example Flow
