@@ -329,6 +329,27 @@ def ui(tmp_path, monkeypatch):
     return at, calls, tmp_path
 
 
+@pytest.mark.parametrize("override", [None, "gpt-4.1-mini"])
+def test_ui_model_defaults_and_independent_selections(ui, monkeypatch, override):
+    _at, calls, root = ui
+    if override is None:
+        monkeypatch.delenv("PLANNER_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("PLANNER_MODEL", override)
+    source = APP.read_text().replace('BASE_DIR = Path(__file__).resolve().parent', f'BASE_DIR = Path({str(root)!r})')
+    at = AppTest.from_string(source).run()
+    assert not at.exception
+    expected = override or "gpt-6-luna"
+    assert at.text_input(key="planner_model").value == expected
+    assert at.text_input(key="quiz_model").value == expected
+    at.text_input(key="planner_model").set_value("custom-planner-model").run()
+    assert at.text_input(key="quiz_model").value == expected
+    at.text_input(key="quiz_model").set_value("custom-quiz-model").run()
+    assert not at.exception
+    assert at.text_input(key="planner_model").value == "custom-planner-model"
+    assert calls == []
+
+
 @pytest.mark.parametrize("use_agent", [False, True])
 def test_generated_roadmap_opens_progress_once_with_saved_plan(ui, monkeypatch, use_agent):
     from src.agent.learning_progress_store import append_week_from_plan
