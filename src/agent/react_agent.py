@@ -8,6 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .prompts import render_prompt
 from .critic import run_plan_critic
 from .learner_setup import make_learner_setup
 from .learning_progress_store import append_week_from_plan, resolve_learning_progress_path
@@ -277,87 +278,35 @@ def build_react_controller_prompt(
     last_observation: str,
 ) -> Tuple[str, str]:
     """Build system and user prompts for the ReAct controller."""
-    tools_desc = (
-        "- retrieve_memory: find relevant past memory; no file paths needed.\n"
-        "- load_learning_roadmap: load roadmap JSON from /roadmaps if present.\n"
-        "- generate_learning_roadmap: create and save a roadmap JSON + markdown.\n"
-        "- summarize_task_progress: load tasks.csv summary for planner context.\n"
-        "- generate_weekly_plan: generate plan content from goal and memory.\n"
-        "- upsert_tasks_from_plan: parse plan markdown and update tasks.csv.\n"
-        "- save_outputs: save plan and LinkedIn draft to disk.\n"
-        "- decide_next_task: pick next task from the plan."
-    )
-    system_prompt = (
-        "You are a tool-calling controller for a weekly planning agent.\n"
-        "You must respond with one JSON object only. No markdown or prose.\n"
-        "Output must start with { and end with }.\n"
-        "Do not wrap in ```json or any code fences.\n"
-        "Allowed actions:\n"
-        '{ "action": "tool", "tool_name": "...", "args": { ... } }\n'
-        '{ "action": "final", "result": { ... } }\n'
-        "Tool names: retrieve_memory, load_learning_roadmap, generate_learning_roadmap, "
-        "summarize_task_progress, generate_weekly_plan, "
-        "upsert_tasks_from_plan, save_outputs, decide_next_task.\n"
-        "Decide the next tool call based on the state and last observation.\n"
-        "Only call tools. Do not generate the weekly plan directly.\n"
-        "POLICY (must follow this priority order):\n"
-        "1) If memory_attempted == True: NEVER call retrieve_memory again in this run.\n"
-        "2) If memory_attempted == False AND has_memory_context == False: call retrieve_memory ONCE.\n"
-        "3) If force_regenerate_roadmap == True AND roadmap_generated == False: call generate_learning_roadmap ONCE.\n"
-        "4) If roadmap_attempted == False: call load_learning_roadmap ONCE.\n"
-        "5) If roadmap_exists == False AND roadmap_generated == False: call generate_learning_roadmap ONCE.\n"
-        "6) If memory_hits == 0: proceed to summarize_task_progress or generate_weekly_plan; "
-        "do NOT retry memory.\n"
-        "7) If has_saved_paths == true AND has_next_task == true: ALWAYS return "
-        '{"action":"final","result":{}}.\n'
-        "8) Otherwise choose exactly ONE tool in this order:\n"
-        "   a) If memory_attempted == false -> retrieve_memory\n"
-        "   b) Else if force_regenerate_roadmap == true AND roadmap_generated == false -> generate_learning_roadmap\n"
-        "   c) Else if roadmap_attempted == false -> load_learning_roadmap\n"
-        "   d) Else if roadmap_exists == false AND roadmap_generated == false -> generate_learning_roadmap\n"
-        "   e) Else if has_task_summary == false -> summarize_task_progress\n"
-        "   f) Else if has_weekly_plan_md == false -> generate_weekly_plan\n"
-        "   g) Else if has_tasks_upserted == false -> upsert_tasks_from_plan\n"
-        "   h) Else if has_saved_paths == false -> save_outputs\n"
-        "   i) Else if has_next_task == false -> decide_next_task\n"
-        "   j) Else -> final\n"
-        "9) Never repeat a tool if the state shows it already succeeded.\n"
-        "10) Output ONLY one JSON object. No prose. No markdown.\n"
-        "Example tool action: {\"action\":\"tool\",\"tool_name\":\"retrieve_memory\",\"args\":{\"k\":8}}\n"
-        "Example final action: {\"action\":\"final\",\"result\":{\"weekly_plan_path\":\"...\"}}\n"
-    )
-    user_prompt = (
-        "GOAL\n"
-        f"- goal: {goal}\n"
-        f"- hours_per_week: {hours_per_week}\n"
-        f"- max_session_minutes: {max_session_minutes}\n"
-        f"- preferences: {preferences.get('text', '')}\n\n"
-        "AVAILABLE TOOLS\n"
-        f"{tools_desc}\n\n"
-        "STATE SUMMARY\n"
-        f"- memory_used: {state.get('memory_used')}\n"
-        f"- memory_snippets_count: {state.get('memory_snippets_count')}\n"
-        f"- memory_attempted: {state.get('memory_attempted')}\n"
-        f"- memory_hits: {state.get('memory_hits')}\n"
-        f"- has_memory_context: {state.get('has_memory_context')}\n"
-        f"- roadmap_attempted: {state.get('roadmap_attempted')}\n"
-        f"- roadmap_exists: {state.get('roadmap_exists')}\n"
-        f"- roadmap_generated: {state.get('roadmap_generated')}\n"
-        f"- roadmap_generation_error: {state.get('roadmap_generation_error')}\n"
-        f"- roadmap_id: {state.get('roadmap_id')}\n"
-        f"- force_regenerate_roadmap: {state.get('force_regenerate_roadmap')}\n"
-        f"- has_task_summary: {bool(state.get('task_progress_summary'))}\n"
-        f"- has_weekly_plan_md: {bool(state.get('weekly_plan_md'))}\n"
-        f"- has_tasks_upserted: {bool(state.get('tasks_upserted'))}\n"
-        f"- has_saved_paths: {bool(state.get('weekly_plan_path') and state.get('linkedin_path'))}\n"
-        f"- has_next_task: {bool(state.get('next_task'))}\n\n"
-        f"- open_tasks_count: {state.get('open_tasks_count', 0)}\n"
-        f"- needs_review_count: {state.get('needs_review_count', 0)}\n"
-        f"- weak_topics: {state.get('weak_topics', [])}\n\n"
-        "LAST OBSERVATION\n"
-        f"{last_observation}\n\n"
-        "RESPONSE FORMAT\n"
-        "Return one JSON object only. Choose the next tool or finalize."
+    tools_desc = render_prompt("controller.tools")
+    system_prompt = render_prompt("controller.system")
+    user_prompt = render_prompt(
+        "controller.user",
+        goal=goal,
+        hours_per_week=hours_per_week,
+        max_session_minutes=max_session_minutes,
+        text=preferences.get('text', ''),
+        tools_desc=tools_desc,
+        memory_used=state.get('memory_used'),
+        memory_snippets_count=state.get('memory_snippets_count'),
+        memory_attempted=state.get('memory_attempted'),
+        memory_hits=state.get('memory_hits'),
+        has_memory_context=state.get('has_memory_context'),
+        roadmap_attempted=state.get('roadmap_attempted'),
+        roadmap_exists=state.get('roadmap_exists'),
+        roadmap_generated=state.get('roadmap_generated'),
+        roadmap_generation_error=state.get('roadmap_generation_error'),
+        roadmap_id=state.get('roadmap_id'),
+        force_regenerate_roadmap=state.get('force_regenerate_roadmap'),
+        task_progress_summary=bool(state.get('task_progress_summary')),
+        weekly_plan_md=bool(state.get('weekly_plan_md')),
+        tasks_upserted=bool(state.get('tasks_upserted')),
+        weekly_plan_path=bool(state.get('weekly_plan_path') and state.get('linkedin_path')),
+        next_task=bool(state.get('next_task')),
+        open_tasks_count=state.get('open_tasks_count', 0),
+        needs_review_count=state.get('needs_review_count', 0),
+        weak_topics=state.get('weak_topics', []),
+        last_observation=last_observation,
     )
     return system_prompt, user_prompt
 
@@ -691,13 +640,10 @@ def run_weekly_planner_agent_react(
                     tool_output={"action": "invalid"},
                 )
                 if not mock_actions:
-                    system_prompt = (
-                        "Return ONLY valid JSON matching the schema. No markdown or prose."
-                    )
-                    user_prompt = (
-                        "Schema: {\"action\":\"tool\",\"tool_name\":\"...\",\"args\":{...}} or "
-                        "{\"action\":\"final\",\"result\":{...}}.\n"
-                        f"Invalid response error: {error}\nReturn a valid JSON object now."
+                    system_prompt = render_prompt("controller.json_repair_system")
+                    user_prompt = render_prompt(
+                        "controller.json_repair_user",
+                        error=error,
                     )
             retries += 1
 

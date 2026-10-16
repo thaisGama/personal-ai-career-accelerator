@@ -1,0 +1,36 @@
+GOAL
+- goal: {goal}
+- hours_per_week: {hours_per_week}
+- max_session_minutes: {max_session_minutes}
+- preferences: {text}
+
+AVAILABLE TOOLS
+{tools_desc}
+
+STATE SUMMARY
+- memory_used: {memory_used}
+- memory_snippets_count: {memory_snippets_count}
+- memory_attempted: {memory_attempted}
+- memory_hits: {memory_hits}
+- has_memory_context: {has_memory_context}
+- roadmap_attempted: {roadmap_attempted}
+- roadmap_exists: {roadmap_exists}
+- roadmap_generated: {roadmap_generated}
+- roadmap_generation_error: {roadmap_generation_error}
+- roadmap_id: {roadmap_id}
+- force_regenerate_roadmap: {force_regenerate_roadmap}
+- has_task_summary: {task_progress_summary}
+- has_weekly_plan_md: {weekly_plan_md}
+- has_tasks_upserted: {tasks_upserted}
+- has_saved_paths: {weekly_plan_path}
+- has_next_task: {next_task}
+
+- open_tasks_count: {open_tasks_count}
+- needs_review_count: {needs_review_count}
+- weak_topics: {weak_topics}
+
+LAST OBSERVATION
+{last_observation}
+
+RESPONSE FORMAT
+Return one JSON object only. Choose the next tool or finalize.

@@ -1,0 +1,8 @@
+- retrieve_memory: find relevant past memory; no file paths needed.
+- load_learning_roadmap: load roadmap JSON from /roadmaps if present.
+- generate_learning_roadmap: create and save a roadmap JSON + markdown.
+- summarize_task_progress: load tasks.csv summary for planner context.
+- generate_weekly_plan: generate plan content from goal and memory.
+- upsert_tasks_from_plan: parse plan markdown and update tasks.csv.
+- save_outputs: save plan and LinkedIn draft to disk.
+- decide_next_task: pick next task from the plan.

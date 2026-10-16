@@ -1,0 +1,142 @@
+[
+  {
+    "prompt_id": "controller.json_repair_system",
+    "version": "1.0.0",
+    "sha256": "30e8879de5fe6ace5bf74bdb73ce20156ca758fa2d99c3209ffbd0678f9928bd"
+  },
+  {
+    "prompt_id": "controller.json_repair_user",
+    "version": "1.0.0",
+    "sha256": "2731770d26f811ac7d117bf22492ab487885cc3e03ad7b9ea6578c626c0062b3"
+  },
+  {
+    "prompt_id": "controller.system",
+    "version": "1.0.0",
+    "sha256": "f818ac7d2ba35e3926bf889c99308ea841df82137a8951beef543f97609ff305"
+  },
+  {
+    "prompt_id": "controller.tools",
+    "version": "1.0.0",
+    "sha256": "cfe8f15eb8e5c59fea1b86786d3158ea230d123d49a5ed832cbe449c0be67204"
+  },
+  {
+    "prompt_id": "controller.user",
+    "version": "1.0.0",
+    "sha256": "253da64d8f1e5a4b95908fcaebc4af04f1c6e10179772a8bd27361f5bbb1375e"
+  },
+  {
+    "prompt_id": "critic.system",
+    "version": "1.0.0",
+    "sha256": "255d84db32dbbd87fe6b88ffe968245f4fc984d43376e3e5c3a187a7ee2b9a31"
+  },
+  {
+    "prompt_id": "critic.user",
+    "version": "1.0.0",
+    "sha256": "83cf0ce459bbaf362cf151030fa3728c48b4645e0af2838488129da40d0b8336"
+  },
+  {
+    "prompt_id": "day_learning_unit.plan_context",
+    "version": "1.0.0",
+    "sha256": "ec9015c046378b54526934126954aa39980deac694b8267e1b9c7eb24a768b9f"
+  },
+  {
+    "prompt_id": "day_learning_unit.review_context",
+    "version": "1.0.0",
+    "sha256": "553106e360030e090f386a299b45364618a4b12d3b9db841047d450c0117301e"
+  },
+  {
+    "prompt_id": "day_learning_unit.roadmap_context",
+    "version": "1.0.0",
+    "sha256": "50d092e5d397f89b5a89cbdea5dde8df2abecb06600625aecf6cb1b8be046397"
+  },
+  {
+    "prompt_id": "day_quiz.context",
+    "version": "1.0.0",
+    "sha256": "8ec9df433615a29fcdbd2d5cb211c6b5e1a468c9d27937908fc9af0f9b793713"
+  },
+  {
+    "prompt_id": "day_quiz.user",
+    "version": "1.0.0",
+    "sha256": "d82518deac4e0e138c9d1f17108cbcddc1c3f8ae53cca218655c6e413e9a554f"
+  },
+  {
+    "prompt_id": "learning_unit.day_repair",
+    "version": "1.0.0",
+    "sha256": "5fad6d9005adf615501bf629b689ba0a5eaf13d0341fd59c10d69f29d9cb1a53"
+  },
+  {
+    "prompt_id": "learning_unit.plan_excerpt",
+    "version": "1.0.0",
+    "sha256": "cf81b7f247a5de17a2f5d6d2d3dd65fa6b78ef6e24416e0e1d6f2698bba51588"
+  },
+  {
+    "prompt_id": "learning_unit.system",
+    "version": "1.0.0",
+    "sha256": "830a8f001bb5e530dff49cfb3164b442d18e3a6898310709c913ae44fbae0331"
+  },
+  {
+    "prompt_id": "learning_unit.user",
+    "version": "1.0.0",
+    "sha256": "b6b285535eca4ac580d92bc528c835b2c9337951e01be33c3a2f7baf1e65e76e"
+  },
+  {
+    "prompt_id": "learning_unit.weekly_repair",
+    "version": "1.0.0",
+    "sha256": "b77a70b4863cda34b0d79d4c9436b29c9c1e310a6119d1cd0c381d5fb5f50bfb"
+  },
+  {
+    "prompt_id": "quiz.system",
+    "version": "1.0.0",
+    "sha256": "97f9327b5888edaea41395e33dd2700cad28188f617f0871c2d74c968ac84bbb"
+  },
+  {
+    "prompt_id": "quiz.task_focus",
+    "version": "1.0.0",
+    "sha256": "455285cf1d8345ebee7bb417eb2173ee60ba6704b6baf1aad58297d970a6ec35"
+  },
+  {
+    "prompt_id": "quiz.user",
+    "version": "1.0.0",
+    "sha256": "e23b09a35d8dd0589aa7dbb76e78877d9768d8591e7e8c7791b9dc0f0485483f"
+  },
+  {
+    "prompt_id": "quiz_evaluation.system",
+    "version": "1.0.0",
+    "sha256": "7317923e09e3136334b716b6de919ed49cd1c115524ea8f9abb1d129885a4d70"
+  },
+  {
+    "prompt_id": "quiz_evaluation.user",
+    "version": "1.0.0",
+    "sha256": "a1c405ad1012aececad067fd9c3678fa4a99a49bfa9a8835f210181840d829e5"
+  },
+  {
+    "prompt_id": "roadmap.system",
+    "version": "1.0.0",
+    "sha256": "7608d15b8fa1548f3cea2e0a4c43b38f4dea3a7dafb693c102dcca16bba4f068"
+  },
+  {
+    "prompt_id": "roadmap.user",
+    "version": "1.0.0",
+    "sha256": "6c94696a0a73ff2b36f4d511e99e2f10e7af2acd85a54169d842cf946fb13372"
+  },
+  {
+    "prompt_id": "weekly_plan.no_memory",
+    "version": "1.0.0",
+    "sha256": "420dd3ac79ffb6948e06aa0d4d88b1dd64cf7e85c990c80f0a65dc0841fe32bc"
+  },
+  {
+    "prompt_id": "weekly_plan.system",
+    "version": "1.0.0",
+    "sha256": "ba12c7649ccb4d139d5022beba6b174d7608c97b9ed578fa1093bec0cfc182a7"
+  },
+  {
+    "prompt_id": "weekly_plan.task_progress",
+    "version": "1.0.0",
+    "sha256": "6f83d255648be1e894432af5e46bf436b6fdccebbe33ab06d7e681aacf7618e0"
+  },
+  {
+    "prompt_id": "weekly_plan.user",
+    "version": "1.0.0",
+    "sha256": "ec617f6ebb8e530120e2813d0035e7a1e299b1a77ff6c97246e3e840392fb3b4"
+  }
+]

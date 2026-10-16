@@ -1,0 +1,22 @@
+Goal for the week: {goal}
+Time available per week: {time_per_week_hours} hours
+Max session length: {max_session_minutes} minutes
+Skill level: intermediate data scientist
+Learning intensity: {target_level}
+Background / constraints: {background}
+Preferences: {preferences}
+
+You are planning a new learning week for the user. You are given some memory from previous weeks (what they did, planned, or learned). Use it to:
+- avoid repeating identical tasks unless repetition is explicitly useful for mastery
+- connect this week’s tasks to what they did before ("last week you started X, this week you'll continue with Y")
+- adjust difficulty and scope logically, and if the user struggled with something, include a brief review task rather than repeating the full effort.
+
+=== CONTEXT FROM PAST WEEKS ===
+{memory_context}
+=== END CONTEXT ===
+{task_block}
+{roadmap_block}
+
+Use tasks.csv to avoid repeating tasks already marked DONE. Prefer NEEDS_REVIEW or IN_PROGRESS tasks when picking new work.
+
+The user is a working parent with limited energy. Suggest a realistic plan that fits into 10–30 minute focused blocks.

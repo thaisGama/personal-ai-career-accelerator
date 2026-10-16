@@ -1,0 +1,9 @@
+
+=== TASK PROGRESS (tasks.csv) ===
+Open tasks (top 5):
+{open_tasks}
+Weak topics:
+{weak_topics}
+Tasks completed last week:
+{completed}
+=== END TASK PROGRESS ===
