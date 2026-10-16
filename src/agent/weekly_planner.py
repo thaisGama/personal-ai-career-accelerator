@@ -425,7 +425,7 @@ def call_llm(
     if usage is not None:
         try:
             print(
-                f"[WeeklyPlanner] Token usage — prompt: {usage.prompt_tokens}, "
+                f"[WeeklyPlanner] Token usage — model: {response.model}, prompt: {usage.prompt_tokens}, "
                 f"completion: {usage.completion_tokens}, total: {usage.total_tokens}"
             )
         except Exception:

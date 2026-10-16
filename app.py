@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 from datetime import datetime
@@ -33,6 +34,8 @@ from src.core.services.quiz_service import (
     generate_day_quiz_service,
     update_tasks_from_quiz_service,
 )
+
+DEFAULT_UI_MODEL = os.getenv("PLANNER_MODEL", "gpt-6-luna")
 
 
 def _safe_delete_path(path: Path, base_dir: Path) -> tuple[bool, str]:
@@ -369,7 +372,7 @@ with st.sidebar:
         key=field_keys["background"], disabled=existing_mode,
     )
     planner_model = st.text_input(
-        "Model", value=getattr(weekly_planner, "DEFAULT_MODEL", "gpt-4.1-mini"), key="planner_model"
+        "Model", value=DEFAULT_UI_MODEL, key="planner_model"
     )
     use_agent_loop = st.checkbox(
         "Use agent loop (multi-step)",
@@ -858,7 +861,7 @@ with quiz_tab:
             disabled=bool(roadmap_id),
         )
         quiz_model = st.text_input(
-            "Model", value=getattr(learning_check, "DEFAULT_MODEL", "gpt-4.1-mini"), key="quiz_model"
+            "Model", value=DEFAULT_UI_MODEL, key="quiz_model"
         )
 
         col_q1, col_q2 = st.columns(2)

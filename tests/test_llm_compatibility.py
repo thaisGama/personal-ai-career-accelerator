@@ -53,3 +53,17 @@ def test_model_request_preserves_prompts_temperature_budget_and_response(mocked_
     constructor.assert_called_once_with(api_key="test-key-not-a-real-credential")
     create.assert_called_once_with(**expected)
     assert result == "  unchanged response\n"
+
+
+def test_usage_log_records_returned_model_and_token_counts(mocked_openai, capsys):
+    _constructor, create = mocked_openai
+    create.return_value.model = "returned-model-snapshot"
+    create.return_value.usage = SimpleNamespace(prompt_tokens=100, completion_tokens=25, total_tokens=125)
+
+    result = weekly_planner.call_llm("System prompt", "User prompt", model="gpt-6-luna")
+
+    assert capsys.readouterr().out == (
+        "[WeeklyPlanner] Token usage — model: returned-model-snapshot, prompt: 100, "
+        "completion: 25, total: 125\n"
+    )
+    assert result == "  unchanged response\n"
