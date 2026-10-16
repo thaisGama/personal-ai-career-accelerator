@@ -1,0 +1,1 @@
+Build a competency-based learning path toward the career stated in the goal, with workplace examples, practical deliverables, and checks of usable skills. Preserve the full AI Engineer curriculum when the goal targets AI Engineering; for other careers choose relevant competencies instead. Do not assume every career is AI Engineering.

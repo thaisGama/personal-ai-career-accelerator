@@ -1,6 +1,8 @@
 """Golden API requests captured from production code before prompt extraction.
 
-Fixtures originate at 5f399f0. Never regenerate them to make a refactor pass.
+Fixtures originate at 5f399f0. PR 3 intentionally updates only the two roadmap
+cases for purpose-aware selection; the other 18 cases remain byte-identical.
+Never regenerate them to make a refactor pass.
 All LLM and embedding boundaries are replaced; no paid requests are made.
 """
 import json
@@ -122,7 +124,7 @@ def collect_requests(root, monkeypatch):
     return requests
 
 
-def test_production_requests_match_pre_extraction_snapshot(tmp_path, monkeypatch):
+def test_production_requests_match_reviewed_snapshot(tmp_path, monkeypatch):
     # Normalize only JSON tuples to lists, never prompt whitespace or content.
     actual = json.loads(json.dumps(collect_requests(tmp_path, monkeypatch), ensure_ascii=False))
     assert actual == json.loads(FIXTURE.read_text(encoding='utf-8'))

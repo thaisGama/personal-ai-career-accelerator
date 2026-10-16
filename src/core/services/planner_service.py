@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from src.agent.learner_setup import load_learner_setup, make_learner_setup
+from src.agent.learning_purpose import LEGACY_PURPOSE
 import src.agent.react_agent as react_agent
 import src.agent.weekly_planner as weekly_planner
 
@@ -88,6 +89,7 @@ def run_weekly_planner_service(
     mock_actions_path: Path | None,
     enable_critic: bool,
     base_dir: Path,
+    learning_purpose: str = LEGACY_PURPOSE,
 ) -> dict:
     """Run the weekly planner in agent or non-agent mode and return normalized outputs."""
     if roadmap_id:
@@ -98,11 +100,13 @@ def run_weekly_planner_service(
         hours_per_week = setup["hours_per_week"]
         max_session_minutes = setup["max_session_minutes"]
         intensity = setup["learning_intensity"]
+        learning_purpose = setup["learning_purpose"]
         force_regenerate_roadmap = False
     setup = make_learner_setup(
         goal=goal, background=background or "", preferences=preferences_text or "",
         hours_per_week=hours_per_week, max_session_minutes=max_session_minutes,
         learning_intensity=intensity or "medium",
+        learning_purpose=learning_purpose,
     )
     _ensure_data_dir(base_dir)
 

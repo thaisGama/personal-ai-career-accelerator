@@ -1,0 +1,1 @@
+Focus on the learner's named certification and its exam-relevant concepts, scenarios, objectives, and knowledge checks. Use practical examples to explain why an answer is correct. Stay within the stated exam scope; do not invent an official blueprint, exam weights, readiness score, or claim official exam questions. Do not require an unrelated AI Engineering curriculum.

@@ -58,6 +58,8 @@ All outputs are saved as structured Markdown files.
 
 LLM templates, their stable IDs, versions, and editing conventions are documented
 in [Prompt management](docs/prompt_management.md).
+Choose Certification Preparation, Topic Mastery, or Career Development through
+[Learning Purpose](docs/learning_purpose.md); every purpose uses the same roadmap workflow.
 
 ---
 

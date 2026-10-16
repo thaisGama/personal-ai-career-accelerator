@@ -85,6 +85,26 @@
     "sha256": "b77a70b4863cda34b0d79d4c9436b29c9c1e310a6119d1cd0c381d5fb5f50bfb"
   },
   {
+    "prompt_id": "purpose.career_development",
+    "version": "1.0.0",
+    "sha256": "ee8d89b39b827be32ccac6eefdc02382756e8f64c9b93665a1a294c15a2bab20"
+  },
+  {
+    "prompt_id": "purpose.certification_preparation",
+    "version": "1.0.0",
+    "sha256": "3829f4fe674a07b701d2fad4be1e8adfed14b72d966d220d48a88daa40e2991c"
+  },
+  {
+    "prompt_id": "purpose.context",
+    "version": "1.0.0",
+    "sha256": "ab0adef710898d6f93341136d52613c731e4c18ef603bc94f88acccb9b49fe7c"
+  },
+  {
+    "prompt_id": "purpose.topic_mastery",
+    "version": "1.0.0",
+    "sha256": "adb6f6b1cd22d575a01a3d284d941f6b92484ff90eec01b6cc848f5f1ff2162b"
+  },
+  {
     "prompt_id": "quiz.system",
     "version": "1.0.0",
     "sha256": "97f9327b5888edaea41395e33dd2700cad28188f617f0871c2d74c968ac84bbb"
@@ -108,6 +128,11 @@
     "prompt_id": "quiz_evaluation.user",
     "version": "1.0.0",
     "sha256": "a1c405ad1012aececad067fd9c3678fa4a99a49bfa9a8835f210181840d829e5"
+  },
+  {
+    "prompt_id": "roadmap.focused_system",
+    "version": "1.0.0",
+    "sha256": "425c94b7f570f4e63610a0cc90eb67db412d330f54c0f53cbb8534cc4545621a"
   },
   {
     "prompt_id": "roadmap.system",

@@ -8,6 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from src.agent.learner_setup import load_learner_setup
+from src.agent.learning_purpose import LEGACY_PURPOSE, PURPOSE_LABELS
 import src.agent.learning_check as learning_check
 from src.agent.tools import (
     tool_generate_learning_unit_for_day,
@@ -319,20 +320,23 @@ with st.sidebar:
         "goal": "planner_goal", "background": "planner_background",
         "preferences": "planner_preferences", "hours_per_week": "planner_hours",
         "max_session_minutes": "planner_max_session", "learning_intensity": "planner_intensity",
+        "learning_purpose": "planner_learning_purpose",
     }
     defaults = dict(
         goal="Learn embeddings + implement vector search memory (practical)",
         background="", preferences="Busy working mom. Prefer practical steps. Each task must fit in the max session time. Include deliverables and a LinkedIn draft.",
         hours_per_week=2.0, max_session_minutes=30, learning_intensity="medium",
+        learning_purpose=LEGACY_PURPOSE,
     )
     new_inputs = st.session_state.setdefault("new_goal_inputs", defaults.copy())
+    new_inputs.setdefault("learning_purpose", LEGACY_PURPOSE)
     if st.session_state.get("previous_planning_route", "Start a new learning goal") == "Start a new learning goal":
         for field, key in field_keys.items():
             if key in st.session_state:
                 new_inputs[field] = st.session_state[key]
     if existing_mode:
         inputs = dict(goal="", background="", preferences="", hours_per_week=0.5,
-                      max_session_minutes=30, learning_intensity="medium")
+                      max_session_minutes=30, learning_intensity="medium", learning_purpose=LEGACY_PURPOSE)
         if roadmap_id:
             try:
                 inputs = load_learner_setup(BASE_DIR, roadmap_id)
@@ -347,6 +351,12 @@ with st.sidebar:
         st.session_state[key] = inputs[field]
     st.session_state["previous_planning_route"] = planning_route
     goal = st.text_input("Goal / focus", key=field_keys["goal"], disabled=existing_mode)
+    learning_purpose = st.selectbox(
+        "Learning purpose", list(PURPOSE_LABELS), format_func=PURPOSE_LABELS.get,
+        key=field_keys["learning_purpose"], disabled=existing_mode,
+        help="Name the certification, topic, or target career in your goal (for example, Become an AI Engineer).",
+    )
+    st.button("Interview Preparation — Coming soon", disabled=True)
     hours_per_week = st.slider(
         "Time available per week (hours)", 0.5, 10.0, step=0.5,
         key=field_keys["hours_per_week"], disabled=existing_mode,
@@ -484,6 +494,7 @@ if generate:
             mock_path = Path(mock_actions_path) if use_agent_loop and use_mock_actions else None
             service_output = run_weekly_planner_service(
                 goal=goal,
+                learning_purpose=learning_purpose,
                 hours_per_week=hours_per_week,
                 max_session_minutes=max_session_minutes,
                 preferences_text=preferences,

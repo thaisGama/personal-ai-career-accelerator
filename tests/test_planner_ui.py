@@ -778,3 +778,52 @@ def test_new_goal_ui_persists_submitted_setup_and_fresh_session_restores(ui, mon
         assert restarted.session_state[key] == submitted[field]
     assert widget(restarted, "text_input", "Goal / focus").disabled
     assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("purpose", ["certification_preparation", "topic_mastery", "career_development"])
+def test_learning_purpose_selection_restore_and_disabled_interview(ui, purpose):
+    at, calls, root = ui
+    selector = at.selectbox(key="planner_learning_purpose")
+    assert len(selector.options) == 3
+    assert widget(at, "button", "Interview Preparation — Coming soon").disabled
+    selector.set_value(purpose).run()
+    assert not at.exception
+    widget(at, "button", "Generate plan").click().run()
+    assert calls[-1]["learning_purpose"] == purpose
+    path = root / "roadmaps" / "alpha_roadmap.json"
+    data = json.loads(path.read_text())
+    data["learner_setup"]["learning_purpose"] = purpose
+    path.write_text(json.dumps(data))
+    before = path.read_bytes()
+    at.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    at.selectbox(key="planner_saved_roadmap").set_value("alpha").run()
+    restored = at.selectbox(key="existing_planner_learning_purpose")
+    assert restored.value == purpose and restored.disabled
+    assert path.read_bytes() == before
+    at.radio(key="planner_route").set_value("Start a new learning goal").run()
+    assert at.selectbox(key="planner_learning_purpose").value == purpose
+
+
+def test_learning_purpose_legacy_ui_default_is_read_only_without_migration(ui):
+    at, _calls, root = ui
+    path = root / "roadmaps" / "alpha_roadmap.json"
+    data = json.loads(path.read_text())
+    del data["learner_setup"]["learning_purpose"]
+    path.write_text(json.dumps(data))
+    before = path.read_bytes()
+    at.radio(key="planner_route").set_value("Use an existing roadmap").run()
+    at.selectbox(key="planner_saved_roadmap").set_value("alpha").run()
+    assert not at.exception
+    assert at.selectbox(key="existing_planner_learning_purpose").value == "career_development"
+    assert at.selectbox(key="existing_planner_learning_purpose").disabled
+    assert path.read_bytes() == before
+
+
+def test_learning_purpose_restores_pre_feature_session_draft(ui):
+    at, _calls, _root = ui
+    draft = dict(at.session_state["new_goal_inputs"])
+    draft.pop("learning_purpose")
+    at.session_state["new_goal_inputs"] = draft
+    at.run()
+    assert not at.exception
+    assert at.selectbox(key="planner_learning_purpose").value == "career_development"

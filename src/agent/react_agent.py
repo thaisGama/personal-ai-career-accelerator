@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .prompts import render_prompt
 from .critic import run_plan_critic
 from .learner_setup import make_learner_setup
+from .learning_purpose import purpose_context
 from .learning_progress_store import append_week_from_plan, resolve_learning_progress_path
 from .memory.vector_store import LocalVectorStore
 from .tools import (
@@ -308,7 +309,7 @@ def build_react_controller_prompt(
         weak_topics=state.get('weak_topics', []),
         last_observation=last_observation,
     )
-    return system_prompt, user_prompt
+    return system_prompt, user_prompt + purpose_context(preferences.get("learner_setup"))
 
 
 def _parse_action(payload: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -785,6 +786,7 @@ def run_weekly_planner_agent_react(
                 base_dir=base_path,
                 roadmap_id=state.get("roadmap_id") or None,
                 force_regenerate=state.get("force_regenerate_roadmap", False),
+                learning_purpose=(preferences.get("learner_setup") or {}).get("learning_purpose"),
             )
             if output.get("error"):
                 raise ValueError(output["error"])

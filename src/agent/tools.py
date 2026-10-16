@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
 from .prompts import render_prompt
-from .learner_setup import validate_learner_setup
+from .learner_setup import load_learner_setup, validate_learner_setup
+from .learning_purpose import purpose_context, uses_ai_engineer_curriculum
 from .memory.vector_store import LocalVectorStore
 from .weekly_planner import (
     DEFAULT_MODEL,
@@ -174,6 +175,7 @@ def tool_generate_weekly_plan(
         target_level=target_level,
         background=background,
         model=model,
+        learner_setup=validate_learner_setup(roadmap["learner_setup"]) if roadmap else preferences.get("learner_setup"),
     )
 
     return {
@@ -662,6 +664,7 @@ def tool_load_learning_roadmap(
     base_dir: Path,
     roadmap_id: str | None = None,
     force_regenerate: bool = False,
+    learning_purpose: str | None = None,
 ) -> Dict[str, Any]:
     """Load a saved roadmap JSON if present."""
     target_path, _, _ = _roadmap_paths(goal, base_dir, roadmap_id)
@@ -671,7 +674,10 @@ def tool_load_learning_roadmap(
         return {"exists": False, "path": target_path.as_posix(), "force_regenerate": True}
     try:
         roadmap = json.loads(target_path.read_text(encoding="utf-8"))
-        validate_learner_setup(roadmap.get("learner_setup"))
+        roadmap["learner_setup"] = validate_learner_setup(roadmap.get("learner_setup"))
+        if learning_purpose is not None and roadmap["learner_setup"]["learning_purpose"] != learning_purpose:
+            return {"exists": True, "error": "A roadmap for this goal has a different learning purpose. "
+                    "Select the existing roadmap or explicitly force regeneration.", "path": target_path.as_posix()}
     except Exception as exc:
         return {"exists": True, "error": f"Failed to parse roadmap JSON: {exc}", "path": target_path.as_posix()}
     return {"exists": True, "roadmap": roadmap, "path": target_path.as_posix()}
@@ -688,13 +694,14 @@ def tool_generate_learning_roadmap(
 ) -> Dict[str, Any]:
     """Generate and save a multi-week learning roadmap for the goal."""
     learner_setup = validate_learner_setup(learner_setup)
-    system_prompt = render_prompt("roadmap.system")
+    system_prompt = render_prompt("roadmap.system" if uses_ai_engineer_curriculum(learner_setup) else "roadmap.focused_system")
     user_prompt = render_prompt(
         "roadmap.user",
         goal=goal,
         target_level=target_level,
         background=background or 'none',
     )
+    user_prompt += purpose_context(learner_setup)
 
     try:
         raw_output = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
@@ -832,6 +839,16 @@ def _read_relative_text(base_dir: Path, relative_path: str) -> str:
         return ""
 
 
+def _day_learner_setup(base_dir: Path, week: Dict[str, Any]) -> dict | None:
+    """Resolve purpose/time through the owning roadmap, never the active UI goal."""
+    roadmap_id = str(week.get("roadmap_id") or "")
+    if not roadmap_id or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789_" for c in roadmap_id):
+        return None
+    if not (base_dir / "roadmaps" / f"{roadmap_id}_roadmap.json").is_file():
+        return None  # Historical detached material remains usable without inventing a setup.
+    return load_learner_setup(base_dir, roadmap_id)
+
+
 def tool_generate_learning_unit_for_day(
     day_id: str,
     base_dir: Path,
@@ -845,6 +862,7 @@ def tool_generate_learning_unit_for_day(
     progress = load_learning_progress(progress_path)
     week, day = find_week_and_day(progress, day_id)
 
+    learner_setup = _day_learner_setup(base_dir, week)
     roadmap_context = render_prompt(
         "day_learning_unit.roadmap_context",
         roadmap_id=week.get('roadmap_id') or 'not provided',
@@ -872,13 +890,14 @@ def tool_generate_learning_unit_for_day(
     )
     unit_system_prompt, unit_user_prompt = build_learning_unit_prompt(
         goal=str(day.get("topic") or week.get("goal") or "Learning day"),
-        preferences=preferences,
+        preferences=learner_setup["preferences"] if learner_setup else preferences,
         memory_context=_memory_context_for_day(base_dir, day, week),
         roadmap_tags=None,
         roadmap_context=roadmap_context,
         plan_context=plan_context,
-        target_level=target_level,
-        background=background,
+        target_level=learner_setup["learning_intensity"] if learner_setup else target_level,
+        background=learner_setup["background"] if learner_setup else background,
+        learner_setup=learner_setup,
     )
 
     raw_output = call_llm(
@@ -960,6 +979,7 @@ def tool_generate_quiz_for_day(
         topic=topic,
         context_text=context_text,
     )
+    user_prompt += purpose_context(_day_learner_setup(base_dir, week))
     quiz_markdown = call_llm(
         system_prompt=QUIZ_GENERATION_SYSTEM_PROMPT,
         user_prompt=user_prompt,
@@ -1034,6 +1054,7 @@ def tool_evaluate_quiz_for_day(
         quiz_markdown=quiz_markdown,
         learner_answers=learner_answers,
         model=model,
+        learner_setup=_day_learner_setup(base_dir, week),
     )
     move_on_decision = str(eval_result.get("move_on_decision") or "").strip().upper()
     quiz_result = "PASS" if move_on_decision == "MOVE_ON" else "FAIL"
