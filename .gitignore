@@ -221,4 +221,6 @@ tests/fixtures/sample_quiz_results.json
 roadmaps/*
 
 .codex
+/experiments/roadmap_prompts/
+/AGENTS.md
 docs/brainstorm_assessment.md

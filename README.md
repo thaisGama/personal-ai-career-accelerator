@@ -60,6 +60,8 @@ LLM templates, their stable IDs, versions, and editing conventions are documente
 in [Prompt management](docs/prompt_management.md).
 Choose Certification Preparation, Topic Mastery, or Career Development through
 [Learning Purpose](docs/learning_purpose.md); every purpose uses the same roadmap workflow.
+Use the [standalone roadmap prompt CLI](docs/roadmap_prompt_cli.md) to inspect one
+generation request without running the agent or writing application data.
 
 ---
 

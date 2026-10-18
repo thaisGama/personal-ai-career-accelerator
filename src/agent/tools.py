@@ -9,7 +9,7 @@ import re
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
-from .prompts import render_prompt
+from .prompts import get_prompt_metadata, render_prompt
 from .learner_setup import load_learner_setup, validate_learner_setup
 from .learning_purpose import purpose_context, uses_ai_engineer_curriculum
 from .memory.vector_store import LocalVectorStore
@@ -683,18 +683,11 @@ def tool_load_learning_roadmap(
     return {"exists": True, "roadmap": roadmap, "path": target_path.as_posix()}
 
 
-def tool_generate_learning_roadmap(
-    goal: str,
-    target_level: str,
-    background: str | None,
-    roadmap_id: str | None,
-    base_dir: Path,
-    model: str,
-    learner_setup: dict,
-) -> Dict[str, Any]:
-    """Generate and save a multi-week learning roadmap for the goal."""
+def build_roadmap_prompt(goal: str, target_level: str, background: str | None, learner_setup: dict) -> dict:
+    """Render production roadmap messages and their template identities without I/O writes."""
     learner_setup = validate_learner_setup(learner_setup)
-    system_prompt = render_prompt("roadmap.system" if uses_ai_engineer_curriculum(learner_setup) else "roadmap.focused_system")
+    system_id = "roadmap.system" if uses_ai_engineer_curriculum(learner_setup) else "roadmap.focused_system"
+    system_prompt = render_prompt(system_id)
     user_prompt = render_prompt(
         "roadmap.user",
         goal=goal,
@@ -703,11 +696,18 @@ def tool_generate_learning_roadmap(
     )
     user_prompt += purpose_context(learner_setup)
 
-    try:
-        raw_output = call_llm(system_prompt=system_prompt, user_prompt=user_prompt, model=model)
-    except Exception as exc:
-        return {"error": f"Failed to generate roadmap: {exc}"}
+    return {
+        "system": system_prompt,
+        "user": user_prompt,
+        "templates": [get_prompt_metadata(prompt_id) for prompt_id in (
+            system_id, "roadmap.user", "purpose.context", "purpose." + learner_setup["learning_purpose"],
+        )],
+    }
 
+
+def parse_roadmap_output(raw_output: str, learner_setup: dict) -> dict:
+    """Apply production parsing/validation without saving a roadmap or seeding tasks."""
+    learner_setup = validate_learner_setup(learner_setup)
     raw_text = raw_output.strip()
     if "<<ROADMAP_JSON>>" in raw_text and "<<END_ROADMAP_JSON>>" in raw_text:
         raw_text = extract_between(raw_text, "<<ROADMAP_JSON>>", "<<END_ROADMAP_JSON>>")
@@ -725,6 +725,30 @@ def tool_generate_learning_roadmap(
     valid, errors = _validate_roadmap_schema(roadmap)
     if not valid:
         return {"error": "Roadmap metadata failed validation.", "validation_errors": errors}
+    return {"roadmap": roadmap}
+
+
+def tool_generate_learning_roadmap(
+    goal: str,
+    target_level: str,
+    background: str | None,
+    roadmap_id: str | None,
+    base_dir: Path,
+    model: str,
+    learner_setup: dict,
+) -> Dict[str, Any]:
+    """Generate and save a multi-week learning roadmap for the goal."""
+    learner_setup = validate_learner_setup(learner_setup)
+    prompt = build_roadmap_prompt(goal, target_level, background, learner_setup)
+    try:
+        raw_output = call_llm(system_prompt=prompt["system"], user_prompt=prompt["user"], model=model)
+    except Exception as exc:
+        return {"error": f"Failed to generate roadmap: {exc}"}
+
+    parsed = parse_roadmap_output(raw_output, learner_setup)
+    if "error" in parsed:
+        return parsed
+    roadmap = parsed["roadmap"]
     json_path, _, md_path = _roadmap_paths(goal, base_dir, roadmap_id)
     try:
         json_path.parent.mkdir(parents=True, exist_ok=True)
