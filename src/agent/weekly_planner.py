@@ -135,6 +135,9 @@ def call_llm(
     model: str = DEFAULT_MODEL,
     temperature: float = 0.5,
     max_tokens: int | None = None,
+    *,
+    max_retries: int | None = None,
+    response_metadata: dict | None = None,
 ) -> str:
     """Call OpenAI's chat completions API and return the assistant markdown string."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -149,7 +152,10 @@ def call_llm(
         model_params = {"max_tokens": token_limit}
 
     try:
-        client = OpenAI(api_key=api_key)
+        client_options = {"api_key": api_key}
+        if max_retries is not None:
+            client_options["max_retries"] = max_retries
+        client = OpenAI(**client_options)
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -161,6 +167,15 @@ def call_llm(
         )
     except Exception as exc:  # pragma: no cover - network/API path
         raise RuntimeError(f"Failed to call OpenAI chat completion: {exc}") from exc
+
+    if response_metadata is not None:
+        usage = getattr(response, "usage", None)
+        response_metadata.update(
+            model=getattr(response, "model", None),
+            usage={name: getattr(usage, name, None) for name in (
+                "prompt_tokens", "completion_tokens", "total_tokens",
+            )} if usage is not None else None,
+        )
 
     if not response or not response.choices:
         raise RuntimeError("OpenAI chat completion returned no choices.")
