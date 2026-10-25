@@ -224,3 +224,5 @@ roadmaps/*
 /experiments/roadmap_prompts/
 /AGENTS.md
 docs/brainstorm_assessment.md
+
+*.patch

@@ -1396,3 +1396,6 @@ Selecting an existing roadmap restores and locks setup. Weekly generation reload
 **Failure behavior:** required metadata/Markdown save errors propagate to the UI, suppress success notices, and preserve the last working preview/selection. Saving still follows existing file-write conventions; this decision does not introduce a transaction across roadmap JSON, Markdown, tasks, and progress. A Markdown write failure may leave a complete setup-bearing JSON file, but the operation is reported as failed and planning does not continue.
 
 **Scope:** changing existing setup, curriculum, progression, daily resume, and roadmap-tab synchronization remain deferred. See the [agreed PR 2 scope](REFACTOR_PLAN.md#agreed-pr-2--embedded-learner-setup-and-read-only-restoration).
+
+## DD-015 - Reuse standalone generation as candidate service within career accelerator
+The standalone generation service is a candidate for reuse by the full Career Accelerator. Its current Markdown-only return value is sufficient for the MVP but may need to expose structured roadmap data before integration.
