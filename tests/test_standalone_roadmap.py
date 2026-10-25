@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -137,6 +138,50 @@ def test_form_submission_retains_result_without_regenerating_on_rerun(api):
     assert not app.exception and "check your learner inputs" in app.error[0].value
     assert not app.markdown
     create.assert_called_once()
+
+
+def test_download_uses_current_session_markdown_without_regeneration(api, monkeypatch):
+    _, create, response = api
+    download = Mock(wraps=st.download_button)
+    monkeypatch.setattr(st, "download_button", download)
+    app = AppTest.from_file(APP).run()
+    download.assert_not_called()
+
+    app.text_area[0].input("Learn IAM policies")
+    app.button[0].click().run()
+    assert not app.exception
+    download.assert_called_once_with(
+        "Download roadmap as Markdown", data=app.session_state["roadmap_markdown"],
+        file_name="learning-roadmap.md", mime="text/markdown", on_click="ignore",
+    )
+    assert app.get("download_button")[0].proto.ignore_rerun
+    create.assert_called_once()
+
+    # Editing the form and rerunning must still download the displayed result.
+    download.reset_mock()
+    app.text_area[0].input("An unsubmitted different goal").run()
+    assert not app.exception
+    assert download.call_args.kwargs["data"] == app.session_state["roadmap_markdown"]
+    create.assert_called_once()
+
+    # A new successful generation replaces both the display and the download.
+    response.choices[0].message.content = json.dumps(dict(CURRICULUM, topic="New topic — café"))
+    download.reset_mock()
+    app.button[0].click().run()
+    assert not app.exception
+    assert "New topic — café" in app.markdown[0].value
+    assert download.call_args.kwargs["data"] == app.session_state["roadmap_markdown"]
+    assert "New topic — café" in download.call_args.kwargs["data"]
+    assert create.call_count == 2
+
+    # A failed submission removes both the old roadmap and its download.
+    download.reset_mock()
+    app.text_area[0].input(" ")
+    app.button[0].click().run()
+    assert not app.exception and app.error
+    download.assert_not_called()
+    assert not app.get("download_button")
+    assert create.call_count == 2
 
 
 @pytest.mark.parametrize("failure", ["api", "output"])

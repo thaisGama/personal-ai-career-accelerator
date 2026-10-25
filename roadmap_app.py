@@ -39,7 +39,13 @@ def main() -> None:
             st.error(str(exc))
 
     if "roadmap_markdown" in st.session_state:
-        st.markdown(st.session_state["roadmap_markdown"])
+        markdown = st.session_state["roadmap_markdown"]
+        st.markdown(markdown)
+        st.download_button(
+            "Download roadmap as Markdown", data=markdown,
+            file_name="learning-roadmap.md", mime="text/markdown",
+            on_click="ignore",
+        )
 
 
 if __name__ == "__main__":
