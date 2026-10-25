@@ -4,7 +4,7 @@ Return ONLY strict JSON wrapped between the tags:
 {{...}}
 <<END_ROADMAP_JSON>>
 No extra text before or after the tags.
-The roadmap must include hands-on deliverables and practice items.
+Include learning activities and measurable completion criteria appropriate to the learner's goal. Require hands-on deliverables only when they are necessary to achieve that goal.
 RESOURCE POLICY FOR ROADMAPS
 - Milestones and suggested practice must NOT depend on paid resources.
 - Prefer:
