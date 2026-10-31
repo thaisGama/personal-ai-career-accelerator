@@ -69,8 +69,11 @@ def test_success_uses_shared_prompt_one_request_and_no_persistence(api, tmp_path
     assert "max_session_minutes: 30" in markdown
     setup = dict(INPUTS, preferences="", max_session_minutes=30)
     prompt = tools.build_roadmap_prompt(setup["goal"], "medium", setup["background"], setup)
-    constructor.assert_called_once_with(api_key="fake-server-key", max_retries=0)
+    constructor.assert_called_once_with(
+        api_key="fake-server-key", max_retries=0, timeout=service.ROADMAP_TIMEOUT_SECONDS,
+    )
     create.assert_called_once()
+    assert create.call_args.kwargs["max_completion_tokens"] == service.ROADMAP_MAX_TOKENS
     assert create.call_args.kwargs["model"] == service.ROADMAP_MODEL
     assert create.call_args.kwargs["messages"] == [
         {"role": "system", "content": prompt["system"]},
@@ -112,7 +115,9 @@ def test_api_failure_is_safe_without_retry(api):
     with pytest.raises(service.RoadmapGenerationError, match="server API configuration") as exc:
         service.generate_roadmap(**INPUTS)
     assert "secret API diagnostic" not in str(exc.value)
-    constructor.assert_called_once_with(api_key="fake-server-key", max_retries=0)
+    constructor.assert_called_once_with(
+        api_key="fake-server-key", max_retries=0, timeout=service.ROADMAP_TIMEOUT_SECONDS,
+    )
     create.assert_called_once()
 
 
@@ -197,4 +202,57 @@ def test_form_displays_safe_generation_errors(api, failure):
     assert not app.exception and len(app.error) == 1
     assert "secret" not in app.error[0].value
     assert not app.markdown
+    create.assert_called_once()
+
+
+@pytest.mark.parametrize("field,limit", [
+    ("goal", service.MAX_GOAL_CHARACTERS),
+    ("background", service.MAX_BACKGROUND_CHARACTERS),
+])
+def test_input_length_boundary_is_accepted(api, field, limit):
+    _, create, _ = api
+    assert service.generate_roadmap(**dict(INPUTS, **{field: "é" * limit}))
+    create.assert_called_once()
+
+
+@pytest.mark.parametrize("field,label,limit", [
+    ("goal", "Learning goal", service.MAX_GOAL_CHARACTERS),
+    ("background", "Background", service.MAX_BACKGROUND_CHARACTERS),
+])
+@pytest.mark.parametrize("padding", ["x", " "])
+def test_oversized_input_rejected_before_llm(api, field, label, limit, padding):
+    constructor, create, _ = api
+    with pytest.raises(ValueError, match=f"{label} must be {limit:,} characters or fewer"):
+        service.generate_roadmap(**dict(INPUTS, **{field: "x" * limit + padding}))
+    constructor.assert_not_called()
+    create.assert_not_called()
+
+
+def test_custom_timeout_reaches_api_client(api):
+    constructor, create, _ = api
+    service.generate_roadmap(**INPUTS, timeout_seconds=45.5)
+    constructor.assert_called_once_with(api_key="fake-server-key", max_retries=0, timeout=45.5)
+    create.assert_called_once()
+    assert create.call_args.kwargs["max_completion_tokens"] == service.ROADMAP_MAX_TOKENS
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), None, True])
+def test_invalid_timeout_rejected_before_llm(api, timeout):
+    constructor, create, _ = api
+    with pytest.raises(ValueError, match="positive, finite"):
+        service.generate_roadmap(**INPUTS, timeout_seconds=timeout)
+    constructor.assert_not_called()
+    create.assert_not_called()
+
+
+def test_timeout_failure_has_no_retry(api):
+    import openai
+
+    constructor, create, _ = api
+    create.side_effect = openai.APITimeoutError(request=Mock())
+    with pytest.raises(service.RoadmapGenerationError, match="connection"):
+        service.generate_roadmap(**INPUTS)
+    constructor.assert_called_once_with(
+        api_key="fake-server-key", max_retries=0, timeout=service.ROADMAP_TIMEOUT_SECONDS,
+    )
     create.assert_called_once()

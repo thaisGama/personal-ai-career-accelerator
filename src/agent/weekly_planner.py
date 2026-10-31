@@ -138,6 +138,7 @@ def call_llm(
     *,
     max_retries: int | None = None,
     response_metadata: dict | None = None,
+    timeout: float | None = None,
 ) -> str:
     """Call OpenAI's chat completions API and return the assistant markdown string."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -155,6 +156,8 @@ def call_llm(
         client_options = {"api_key": api_key}
         if max_retries is not None:
             client_options["max_retries"] = max_retries
+        if timeout is not None:
+            client_options["timeout"] = timeout
         client = OpenAI(**client_options)
         response = client.chat.completions.create(
             model=model,

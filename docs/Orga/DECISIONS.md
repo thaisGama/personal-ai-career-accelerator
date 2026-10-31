@@ -1399,3 +1399,31 @@ Selecting an existing roadmap restores and locks setup. Weekly generation reload
 
 ## DD-015 - Reuse standalone generation as candidate service within career accelerator
 The standalone generation service is a candidate for reuse by the full Career Accelerator. Its current Markdown-only return value is sufficient for the MVP but may need to expose structured roadmap data before integration.
+
+## DD-016 - Standalone Roadmap Generator — Request limits (Public Beta)
+
+Status: Accepted provisionally; review after beta usage.
+
+Decisions
+
+Enforce input-length limits at both UI and service boundaries. Service-side validation protects future integrations independently of Streamlit.
+
+Apply length limits to normalized learner inputs. Minor differences between UI and service behavior are acceptable for the MVP.
+
+Set the standalone LLM output ceiling to 8,000 tokens, increased from the previous shared default of 4,500. This is a maximum, not a target.
+
+Use a 120-second API timeout with zero automatic retries.
+
+Observations to revisit
+
+Check whether normalized input validation causes meaningful inconsistencies.
+
+Observe actual output-token usage, generation latency, truncation, and roadmap length.
+
+If outputs are unnecessarily long, investigate proportional output budgets by learning purpose or goal complexity before implementing them.
+
+Reassess the timeout if real requests frequently approach the limit.
+
+Rationale
+
+Prioritize reliable, bounded requests and a usable beta without introducing premature complexity. Adjust limits based on observed behavior rather than assumptions.

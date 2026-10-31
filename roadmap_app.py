@@ -3,15 +3,22 @@
 import streamlit as st
 
 from src.agent.learning_purpose import PURPOSE_LABELS
-from standalone_roadmap.service import RoadmapGenerationError, generate_roadmap
+from standalone_roadmap.service import (
+    MAX_BACKGROUND_CHARACTERS,
+    MAX_GOAL_CHARACTERS,
+    RoadmapGenerationError,
+    generate_roadmap,
+)
 
 
 def main() -> None:
     """Generate only on form submission; retain the result across reruns."""
     st.title("Roadmap Generator")
     with st.form("roadmap_form"):
-        goal = st.text_area("Learning goal (required)")
-        background = st.text_area("Current background/skills (optional)")
+        goal = st.text_area("Learning goal (required)", max_chars=MAX_GOAL_CHARACTERS)
+        background = st.text_area(
+            "Current background/skills (optional)", max_chars=MAX_BACKGROUND_CHARACTERS,
+        )
         purpose = st.selectbox(
             "Learning purpose",
             ["career_development", "topic_mastery", "certification_preparation"],
