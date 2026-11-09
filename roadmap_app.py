@@ -7,6 +7,7 @@ from standalone_roadmap.service import (
     MAX_BACKGROUND_CHARACTERS,
     MAX_GOAL_CHARACTERS,
     RoadmapGenerationError,
+    RoadmapUnavailableError,
     generate_roadmap,
 )
 
@@ -32,17 +33,20 @@ def main() -> None:
         submitted = st.form_submit_button("Generate roadmap")
 
     if submitted:
-        # Clear the previous result so a failed new request cannot show stale output.
-        st.session_state.pop("roadmap_markdown", None)
         try:
             with st.spinner("Generating roadmap…"):
                 st.session_state["roadmap_markdown"] = generate_roadmap(
                     goal=goal, background=background, learning_purpose=purpose,
                     hours_per_week=hours, learning_intensity=intensity,
                 )
+        except RoadmapUnavailableError as exc:
+            # A refused request keeps the existing result available to download.
+            st.error(str(exc))
         except ValueError as exc:
+            st.session_state.pop("roadmap_markdown", None)
             st.error(f"Please check your learner inputs: {exc}")
         except RoadmapGenerationError as exc:
+            st.session_state.pop("roadmap_markdown", None)
             st.error(str(exc))
 
     if "roadmap_markdown" in st.session_state:

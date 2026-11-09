@@ -76,6 +76,9 @@ This is the SDK network timeout, not a strict end-to-end wall-clock deadline.
 SDK retries remain disabled, and no application retry is added. Shared Career
 Accelerator callers retain their existing timeout, retry, and token defaults.
 
+See [standalone development and beta configuration](standalone_roadmap/README.md)
+for environment settings, usage protection, and safe key setup.
+
 ---
 
 ## 🧪 Example Flow
