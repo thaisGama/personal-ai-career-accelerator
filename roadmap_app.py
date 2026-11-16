@@ -1,5 +1,7 @@
 """Standalone roadmap form. Launch with: streamlit run roadmap_app.py."""
 
+import logging
+
 import streamlit as st
 
 from src.agent.learning_purpose import PURPOSE_LABELS
@@ -14,6 +16,8 @@ from standalone_roadmap.service import (
 
 def main() -> None:
     """Generate only on form submission; retain the result across reruns."""
+    # Provide console output when the host has no logging handler configured.
+    logging.basicConfig(format="%(levelname)s %(name)s %(message)s")
     st.title("Roadmap Generator")
     with st.form("roadmap_form"):
         goal = st.text_area("Learning goal (required)", max_chars=MAX_GOAL_CHARACTERS)

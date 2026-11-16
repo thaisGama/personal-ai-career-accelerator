@@ -1,6 +1,10 @@
 """One roadmap request using shared helpers, without application persistence."""
 
+import logging
 import math
+from time import perf_counter
+
+from openai import APITimeoutError
 
 from src.agent.learner_setup import make_learner_setup, validate_learner_setup
 from src.agent.tools import (
@@ -20,6 +24,28 @@ from .config import (
     ROADMAP_TIMEOUT_SECONDS,
     load_config,
 )
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+def _log_outcome(outcome: str, category: str, started: float, metadata: dict) -> None:
+    """Diagnostics are best effort and contain only server-owned fields/counts."""
+    try:
+        usage = metadata.get("usage") or {}
+        # Whitelist numeric counts; never interpolate provider/user text.
+        counts = {key: value if type(value := usage.get(key)) is int and value >= 0 else None
+                  for key in ("prompt_tokens", "completion_tokens")}
+        logger.info(
+            "roadmap_generation outcome=%s category=%s duration_seconds=%.3f "
+            "model=%s input_tokens=%s output_tokens=%s",
+            outcome, category, perf_counter() - started, ROADMAP_MODEL,
+            counts["prompt_tokens"], counts["completion_tokens"],
+        )
+    except Exception:
+        # A broken logging handler must never change results or quota accounting.
+        pass
 
 
 class RoadmapGenerationError(Exception):
@@ -63,24 +89,35 @@ def generate_roadmap(*, goal: str, background: str = "",
         setup["goal"], setup["learning_intensity"], setup["background"], setup,
     )
     with admission_controller.admit(config):
+        started = perf_counter()
+        metadata: dict = {}
+        outcome, category = "failure", "internal_error"
         try:
-            raw = call_llm(
-                system_prompt=prompt["system"], user_prompt=prompt["user"],
-                model=ROADMAP_MODEL, max_retries=0, timeout=timeout_seconds,
-                max_tokens=ROADMAP_MAX_TOKENS,
-            )
-        except Exception:
-            raise RoadmapGenerationError(
-                "Could not generate a roadmap. Check the server API configuration "
-                "and connection, then submit again."
-            ) from None
+            try:
+                raw = call_llm(
+                    system_prompt=prompt["system"], user_prompt=prompt["user"],
+                    model=ROADMAP_MODEL, max_retries=0, timeout=timeout_seconds,
+                    max_tokens=ROADMAP_MAX_TOKENS, response_metadata=metadata, log_usage=False,
+                )
+            except Exception as exc:
+                category = ("api_timeout" if isinstance(exc, APITimeoutError)
+                            or isinstance(exc.__cause__, APITimeoutError) else "api_failure")
+                raise RoadmapGenerationError(
+                    "Could not generate a roadmap. Check the server API configuration "
+                    "and connection, then submit again."
+                ) from None
 
-        try:
-            parsed = parse_roadmap_output(raw, setup)
-            if parsed.get("error"):
-                raise ValueError("Invalid roadmap output")
-            return _render_roadmap_markdown(parsed["roadmap"])
-        except (TypeError, ValueError, KeyError, AttributeError):
-            raise RoadmapGenerationError(
-                "The model returned an invalid roadmap. Please submit again."
-            ) from None
+            try:
+                parsed = parse_roadmap_output(raw, setup)
+                if parsed.get("error"):
+                    raise ValueError("Invalid roadmap output")
+                markdown = _render_roadmap_markdown(parsed["roadmap"])
+            except (TypeError, ValueError, KeyError, AttributeError):
+                category = "invalid_output"
+                raise RoadmapGenerationError(
+                    "The model returned an invalid roadmap. Please submit again."
+                ) from None
+            outcome, category = "success", "none"
+            return markdown
+        finally:
+            _log_outcome(outcome, category, started, metadata)

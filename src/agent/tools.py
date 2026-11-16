@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from decimal import Decimal, ROUND_CEILING
 import json
 from pathlib import Path
 import re
@@ -291,6 +292,56 @@ def _infer_roadmap_id(goal: str, roadmap_id: str | None, roadmap_path: str | Non
     return _slugify_goal(goal)
 
 
+# Absolute tolerances: three minutes for hour sums; 0.05 week for fractional
+# estimates. Whole weeks may instead be rounded UP (existing fixture convention).
+ROADMAP_HOUR_TOLERANCE = Decimal("0.05")
+ROADMAP_WEEK_TOLERANCE = Decimal("0.05")
+
+
+def _validate_roadmap_estimates(roadmap: Dict[str, Any]) -> List[str]:
+    """Validate structurally checked estimates without repairing model output.
+
+    Decimal arithmetic makes tolerance boundaries explicit and avoids float
+    overflow or an arbitrary upper bound on educational duration.
+    """
+    errors: List[str] = []
+
+    def estimate(value: Any, label: str) -> Decimal:
+        number = Decimal(str(value)) if type(value) in (int, float) else Decimal("NaN")
+        if not number.is_finite() or number <= 0:
+            errors.append(f"{label} must be a positive, finite number (not boolean).")
+        return number
+
+    total = estimate(roadmap["total_estimated_hours"], "total_estimated_hours")
+    weeks = {key: estimate(roadmap["estimated_weeks_at_hours_per_week"][key],
+                           f"estimated_weeks_at_hours_per_week[{key}]")
+             for key in ("2", "5", "7")}
+    phases = []
+    for index, phase in enumerate(roadmap["phases"]):
+        hours = estimate(phase["estimated_hours"], f"phase[{index}] estimated_hours")
+        milestones = [estimate(item["estimated_hours"],
+                               f"phase[{index}] milestone[{i}] estimated_hours")
+                      for i, item in enumerate(phase["milestones"])]
+        phases.append((hours, milestones))
+    if errors:
+        return errors
+
+    for index, (hours, milestones) in enumerate(phases):
+        if abs(hours - sum(milestones)) > ROADMAP_HOUR_TOLERANCE:
+            errors.append(f"phase[{index}] estimated_hours must match its milestone sum within 0.05 hours.")
+    if abs(total - sum(hours for hours, _ in phases)) > ROADMAP_HOUR_TOLERANCE:
+        errors.append("total_estimated_hours must match the phase sum within 0.05 hours.")
+    for key, value in weeks.items():
+        expected = total / Decimal(key)
+        # Accept fractional estimates rounded within tolerance, or integer weeks
+        # rounded upward. Do not grant a whole-week tolerance to fractions.
+        rounded_up = expected.to_integral_value(rounding=ROUND_CEILING)
+        if abs(value - expected) > ROADMAP_WEEK_TOLERANCE and value != rounded_up:
+            errors.append(f"estimated_weeks_at_hours_per_week[{key}] must match total/{key} "
+                          "within 0.05 weeks or round up to a whole week.")
+    return errors
+
+
 def _validate_curriculum_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str]]:
     errors: List[str] = []
 
@@ -368,6 +419,8 @@ def _validate_curriculum_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str
                                 "resource search_phrase must be a string.",
                             )
 
+    if not errors:
+        errors.extend(_validate_roadmap_estimates(roadmap))
     return len(errors) == 0, errors
 
 

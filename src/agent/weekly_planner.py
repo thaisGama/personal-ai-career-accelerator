@@ -138,6 +138,7 @@ def call_llm(
     *,
     max_retries: int | None = None,
     response_metadata: dict | None = None,
+    log_usage: bool = True,
     timeout: float | None = None,
 ) -> str:
     """Call OpenAI's chat completions API and return the assistant markdown string."""
@@ -188,7 +189,7 @@ def call_llm(
         raise RuntimeError("OpenAI chat completion returned empty content.")
 
     usage = getattr(response, "usage", None)
-    if usage is not None:
+    if usage is not None and log_usage:
         try:
             print(
                 f"[WeeklyPlanner] Token usage — model: {response.model}, prompt: {usage.prompt_tokens}, "
