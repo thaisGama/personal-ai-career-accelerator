@@ -6,7 +6,7 @@ from time import perf_counter
 
 from openai import APITimeoutError
 
-from src.agent.learner_setup import make_learner_setup, validate_learner_setup
+from src.agent.learner_setup import make_roadmap_learner_setup
 from src.agent.tools import (
     _render_roadmap_markdown,
     build_roadmap_prompt,
@@ -18,7 +18,6 @@ from .config import (
     ConfigurationError,
     MAX_BACKGROUND_CHARACTERS,
     MAX_GOAL_CHARACTERS,
-    MAX_SESSION_MINUTES,
     ROADMAP_MAX_TOKENS,
     ROADMAP_MODEL,
     ROADMAP_TIMEOUT_SECONDS,
@@ -56,6 +55,7 @@ def generate_roadmap(*, goal: str, background: str = "",
                      learning_purpose: str = "career_development",
                      hours_per_week: float = 2.0,
                      learning_intensity: str = "medium",
+                     preferred_session_minutes: int | None = None,
                      timeout_seconds: float = ROADMAP_TIMEOUT_SECONDS) -> str:
     """Validate inputs, make one request, and return validated roadmap Markdown.
 
@@ -64,12 +64,12 @@ def generate_roadmap(*, goal: str, background: str = "",
     Admission/configuration refusals raise RoadmapUnavailableError without using quota.
     Server callers may override timeout_seconds with a positive finite duration.
     """
-    setup = validate_learner_setup(make_learner_setup(
+    setup = make_roadmap_learner_setup(
         goal=goal, background=background, preferences="",
         learning_purpose=learning_purpose, hours_per_week=hours_per_week,
-        max_session_minutes=MAX_SESSION_MINUTES,
+        preferred_session_minutes=preferred_session_minutes,
         learning_intensity=learning_intensity,
-    ))
+    )
     for field, label, limit in (
         ("goal", "Learning goal", MAX_GOAL_CHARACTERS),
         ("background", "Background", MAX_BACKGROUND_CHARACTERS),

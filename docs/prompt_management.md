@@ -122,3 +122,21 @@ embedding boundaries.
 .venv/bin/python -m pytest -q tests/test_prompt_loader.py tests/test_prompt_snapshots.py
 .venv/bin/python -m pytest -q
 ```
+
+## Roadmap scheduling separation (#32)
+
+Roadmap construction now appends `roadmap.context` (version 2.0.0)
+instead of `purpose.context`. It composes the existing purpose instructions with
+complete-journey guidance and representative practice. Runtime composition selects
+the existing hard session maximum for full-app setup, an optional soft preference
+for standalone setup, or no duration constraint. The 2.0.0 version changes the
+context placeholder contract to accept this session guidance; hard maxima take
+precedence if both settings exist. The roadmap system/user identities and their
+bytes remain unchanged.
+`purpose.context` remains unchanged for weekly plans, learning units, quizzes and
+grading, including the weekly planner's hard time limits.
+
+Only the two roadmap cases in `production_requests.json` change. The metadata
+fixture adds the new context's version and SHA-256; other snapshots and historical
+experiment artifacts remain unchanged. Composition changes apply equally to the
+standalone form, prompt CLI and full-application roadmap tooling.

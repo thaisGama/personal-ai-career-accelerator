@@ -4,6 +4,7 @@ import logging
 
 import streamlit as st
 
+from src.agent.learner_setup import PREFERRED_SESSION_MINUTES
 from src.agent.learning_purpose import PURPOSE_LABELS
 from standalone_roadmap.service import (
     MAX_BACKGROUND_CHARACTERS,
@@ -33,6 +34,14 @@ def main() -> None:
             "Available weekly learning hours", min_value=0.5, max_value=10.0,
             value=2.0, step=0.5,
         )
+        preferred_session = st.selectbox(
+            "Preferred session duration (optional)", [None, *PREFERRED_SESSION_MINUTES],
+            format_func=lambda value: "No preference" if value is None else f"{value} minutes",
+        )
+        st.caption(
+            "Your preferred session length will be considered when recommending learning activities. "
+            "Some practical exercises may benefit from longer sessions, which will be clearly indicated."
+        )
         intensity = st.selectbox("Learning intensity", ["light", "medium", "hardcore"], index=1)
         submitted = st.form_submit_button("Generate roadmap")
 
@@ -42,6 +51,7 @@ def main() -> None:
                 st.session_state["roadmap_markdown"] = generate_roadmap(
                     goal=goal, background=background, learning_purpose=purpose,
                     hours_per_week=hours, learning_intensity=intensity,
+                    preferred_session_minutes=preferred_session,
                 )
         except RoadmapUnavailableError as exc:
             # A refused request keeps the existing result available to download.

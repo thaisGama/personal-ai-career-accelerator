@@ -70,9 +70,10 @@ def test_success_uses_shared_prompt_one_request_and_no_persistence(api, tmp_path
     markdown = service.generate_roadmap(**INPUTS)
     assert "# Global Learning Roadmap: IAM policies" in markdown
     assert "Explain deny precedence" in markdown
-    assert "hours_per_week: 3.5" in markdown
-    assert "max_session_minutes: 30" in markdown
-    setup = dict(INPUTS, preferences="", max_session_minutes=30)
+    assert "Available study time: 3.5 hours per week" in markdown
+    assert "Preferred session duration: No preference" in markdown
+    assert "max_session_minutes" not in markdown
+    setup = dict(INPUTS, preferences="", preferred_session_minutes=None)
     prompt = tools.build_roadmap_prompt(setup["goal"], "medium", setup["background"], setup)
     constructor.assert_called_once_with(
         api_key="fake-server-key", max_retries=0, timeout=service.ROADMAP_TIMEOUT_SECONDS,

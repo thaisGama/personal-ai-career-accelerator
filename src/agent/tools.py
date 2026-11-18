@@ -11,8 +11,8 @@ from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
 from .prompts import get_prompt_metadata, render_prompt
-from .learner_setup import load_learner_setup, validate_learner_setup
-from .learning_purpose import purpose_context, uses_ai_engineer_curriculum
+from .learner_setup import load_learner_setup, validate_learner_setup, validate_roadmap_learner_setup
+from .learning_purpose import PURPOSE_LABELS, purpose_context, roadmap_purpose_context, uses_ai_engineer_curriculum
 from .memory.vector_store import LocalVectorStore
 from .weekly_planner import (
     DEFAULT_MODEL,
@@ -427,13 +427,21 @@ def _validate_curriculum_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str
 def _validate_roadmap_schema(roadmap: Dict[str, Any]) -> Tuple[bool, List[str]]:
     valid, errors = _validate_curriculum_schema(roadmap)
     try:
-        validate_learner_setup(roadmap.get("learner_setup") if isinstance(roadmap, dict) else None)
+        validate_roadmap_learner_setup(roadmap.get("learner_setup") if isinstance(roadmap, dict) else None)
     except ValueError as exc:
         errors.append(str(exc))
     return not errors, errors
 
 
+def _format_roadmap_number(value: Any) -> str:
+    """Use two decimal places at most, without trailing zeros."""
+    number = Decimal(str(value))
+    formatted = format(number, ".2f").rstrip("0").rstrip(".")
+    return "<0.01" if number > 0 and formatted == "0" else formatted
+
+
 def _render_roadmap_markdown(roadmap: Dict[str, Any]) -> str:
+    """Render a validated roadmap without changing curriculum content or estimates."""
     lines = []
     lines.append(f"# Global Learning Roadmap: {roadmap.get('topic', '')}")
     lines.append("")
@@ -442,13 +450,24 @@ def _render_roadmap_markdown(roadmap: Dict[str, Any]) -> str:
     weeks = roadmap.get("estimated_weeks_at_hours_per_week", {})
     lines.append(
         "- Estimated weeks at 2/5/7 hrs per week: "
-        f"{weeks.get('2', '?')} / {weeks.get('5', '?')} / {weeks.get('7', '?')}"
+        f"{_format_roadmap_number(weeks['2'])} / {_format_roadmap_number(weeks['5'])} / {_format_roadmap_number(weeks['7'])}"
     )
     lines.append("")
-    setup = validate_learner_setup(roadmap.get("learner_setup"))
-    lines.append("## Learner setup")
-    for field, value in setup.items():
-        lines.append(f"- {field}: {value}")
+    setup = validate_roadmap_learner_setup(roadmap.get("learner_setup"))
+    preferred = setup.get("preferred_session_minutes")
+    lines.append("## Learning plan overview")
+    lines.append(f"- Goal: {setup['goal']}")
+    lines.append(f"- Learning purpose: {PURPOSE_LABELS[setup['learning_purpose']]}")
+    lines.append(f"- Available study time: {_format_roadmap_number(setup['hours_per_week'])} hours per week")
+    if preferred is not None or "max_session_minutes" not in setup:
+        lines.append(f"- Preferred session duration: {str(preferred) + ' minutes' if preferred is not None else 'No preference'}")
+    if "max_session_minutes" in setup:
+        lines.append(f"- Maximum session duration: {setup['max_session_minutes']} minutes")
+    lines.append(f"- Learning intensity: {setup['learning_intensity'].capitalize()}")
+    duration = Decimal(str(roadmap["total_estimated_hours"])) / Decimal(str(setup["hours_per_week"]))
+    planning_weeks = duration.to_integral_value(rounding=ROUND_CEILING)
+    lines.append(f"- Calculated duration: {_format_roadmap_number(duration)} weeks")
+    lines.append(f"- Planning estimate: approximately {planning_weeks} {'week' if planning_weeks == 1 else 'weeks'}")
     lines.append("")
     prerequisites = roadmap.get("prerequisites") or []
     if prerequisites:
@@ -738,7 +757,7 @@ def tool_load_learning_roadmap(
 
 def build_roadmap_prompt(goal: str, target_level: str, background: str | None, learner_setup: dict) -> dict:
     """Render production roadmap messages and their template identities without I/O writes."""
-    learner_setup = validate_learner_setup(learner_setup)
+    learner_setup = validate_roadmap_learner_setup(learner_setup)
     system_id = "roadmap.system" if uses_ai_engineer_curriculum(learner_setup) else "roadmap.focused_system"
     system_prompt = render_prompt(system_id)
     user_prompt = render_prompt(
@@ -747,20 +766,20 @@ def build_roadmap_prompt(goal: str, target_level: str, background: str | None, l
         target_level=target_level,
         background=background or 'none',
     )
-    user_prompt += purpose_context(learner_setup)
+    user_prompt += roadmap_purpose_context(learner_setup)
 
     return {
         "system": system_prompt,
         "user": user_prompt,
         "templates": [get_prompt_metadata(prompt_id) for prompt_id in (
-            system_id, "roadmap.user", "purpose.context", "purpose." + learner_setup["learning_purpose"],
+            system_id, "roadmap.user", "roadmap.context", "purpose." + learner_setup["learning_purpose"],
         )],
     }
 
 
 def parse_roadmap_output(raw_output: str, learner_setup: dict) -> dict:
     """Apply production parsing/validation without saving a roadmap or seeding tasks."""
-    learner_setup = validate_learner_setup(learner_setup)
+    learner_setup = validate_roadmap_learner_setup(learner_setup)
     raw_text = raw_output.strip()
     if "<<ROADMAP_JSON>>" in raw_text and "<<END_ROADMAP_JSON>>" in raw_text:
         raw_text = extract_between(raw_text, "<<ROADMAP_JSON>>", "<<END_ROADMAP_JSON>>")
@@ -790,7 +809,7 @@ def tool_generate_learning_roadmap(
     model: str,
     learner_setup: dict,
 ) -> Dict[str, Any]:
-    """Generate and save a multi-week learning roadmap for the goal."""
+    """Generate and persist a roadmap with setup usable by the Weekly Planner."""
     learner_setup = validate_learner_setup(learner_setup)
     prompt = build_roadmap_prompt(goal, target_level, background, learner_setup)
     try:

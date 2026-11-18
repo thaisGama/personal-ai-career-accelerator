@@ -41,6 +41,35 @@ Select **Download roadmap as Markdown** to download the displayed roadmap as
 Results are held only in the current Streamlit session; the application does not
 save roadmap files or maintain history.
 
+## Shared roadmap behavior
+
+Both entry points use `build_roadmap_prompt`, `parse_roadmap_output`, the curriculum
+and numerical validators, and `_render_roadmap_markdown` in `src/agent/tools.py`,
+plus the same LLM helper. The standalone wrapper adds admission, request limits,
+and safe errors; the full application adds persistence, milestone tasks and
+weekly planning. There is no separate standalone formatter.
+
+Preferred session duration defaults to **No preference**, with optional 15, 30,
+45, 60 or 90-minute guidance. It is a soft roadmap preference: useful longer
+activities may be suggested with an explanation. Standalone setup stores
+`preferred_session_minutes` (including `None`), without inventing a
+`max_session_minutes`. Full-app setup still requires its existing hard maximum;
+weekly planning and saved-roadmap loading retain that contract.
+
+Roadmap-only context (`roadmap.context`, version 2.0.0) replaces scheduling context
+for both roadmap entry points and the prompt CLI. Full-app roadmap activities
+respect the configured hard session maximum; standalone preferences remain soft.
+Other workflows retain `purpose.context` unchanged. Roadmaps describe the complete
+journey and representative practice; detailed weeks and days belong to the Weekly
+Planner.
+
+Newly rendered Markdown shows a readable learning overview, omits full background
+and raw setup fields, and calculates total hours / selected weekly hours plus its
+whole-week ceiling. Calculated durations display at most two decimal places. The supplementary
+2/5/7 comparison and curriculum content remain. Internal setup is retained;
+existing saved JSON and Markdown are not rewritten. LLM effort estimates and
+numerical validation are unchanged; rendering never aggregates or repairs them.
+
 ## Environment configuration and usage protection
 
 Both environments run the same `roadmap_app.py`. Standalone settings live in

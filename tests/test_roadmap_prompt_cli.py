@@ -83,7 +83,7 @@ def test_cli_one_request_matches_production_prompts_and_captures_metadata(experi
         {'role': 'user', 'content': report['prompt']['user']},
     ]
     assert report['prompt']['templates'] == [get_prompt_metadata(prompt_id) for prompt_id in (
-        system_id, 'roadmap.user', 'purpose.context', 'purpose.' + purpose)]
+        system_id, 'roadmap.user', 'roadmap.context', 'purpose.' + purpose)]
     assert report['raw_response'] == response.choices[0].message.content
     assert report['roadmap'] == dict(CURRICULUM, learner_setup=setup)
     assert report['learner_setup'] == setup

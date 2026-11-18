@@ -72,8 +72,8 @@ def test_generation_routes_persist_exact_application_setup(tmp_path, mocked_cont
     assert roadmap["topic"] == CURRICULUM["topic"]
     assert tools._validate_roadmap_schema(roadmap) == (True, [])
     markdown = roadmap_path.with_suffix(".md").read_text()
-    assert "## Learner setup" in markdown
-    assert "hours_per_week: 3.5" in markdown
+    assert "## Learning plan overview" in markdown
+    assert "Available study time: 3.5 hours per week" in markdown
     assert Path(result["result"]["plan_path"]).is_file()
     progress = json.loads((tmp_path / "data" / "learning_progress.json").read_text())
     week = progress["weeks"][-1]
