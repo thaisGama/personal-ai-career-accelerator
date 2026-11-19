@@ -21,9 +21,13 @@ def main() -> None:
     logging.basicConfig(format="%(levelname)s %(name)s %(message)s")
     st.title("Roadmap Generator")
     with st.form("roadmap_form"):
-        goal = st.text_area("Learning goal (required)", max_chars=MAX_GOAL_CHARACTERS)
+        goal = st.text_area(
+            "Learning goal (required)", max_chars=MAX_GOAL_CHARACTERS,
+            placeholder="e.g., Learn to build and deploy a RAG application using Python and AWS.",
+        )
         background = st.text_area(
             "Current background/skills (optional)", max_chars=MAX_BACKGROUND_CHARACTERS,
+            placeholder="e.g., I know Python and basic AWS, but have never built an LLM application.",
         )
         purpose = st.selectbox(
             "Learning purpose",
@@ -42,7 +46,6 @@ def main() -> None:
             "Your preferred session length will be considered when recommending learning activities. "
             "Some practical exercises may benefit from longer sessions, which will be clearly indicated."
         )
-        intensity = st.selectbox("Learning intensity", ["light", "medium", "hardcore"], index=1)
         submitted = st.form_submit_button("Generate roadmap")
 
     if submitted:
@@ -50,7 +53,7 @@ def main() -> None:
             with st.spinner("Generating roadmap…"):
                 st.session_state["roadmap_markdown"] = generate_roadmap(
                     goal=goal, background=background, learning_purpose=purpose,
-                    hours_per_week=hours, learning_intensity=intensity,
+                    hours_per_week=hours,
                     preferred_session_minutes=preferred_session,
                 )
         except RoadmapUnavailableError as exc:

@@ -410,3 +410,60 @@ def test_kill_switch_preserves_previous_result_and_download(api, monkeypatch):
     assert app.markdown[0].value == markdown.strip()
     assert app.get("download_button")
     create.assert_called_once()
+
+
+def test_form_placeholders_are_visible_with_empty_initial_inputs(api):
+    _, create, _ = api
+    app = AppTest.from_file(APP).run()
+    assert not app.exception
+    assert app.text_area[0].label == "Learning goal (required)"
+    assert app.text_area[0].proto.placeholder == (
+        "e.g., Learn to build and deploy a RAG application using Python and AWS."
+    )
+    assert app.text_area[1].label == "Current background/skills (optional)"
+    assert app.text_area[1].proto.placeholder == (
+        "e.g., I know Python and basic AWS, but have never built an LLM application."
+    )
+    assert app.text_area[0].value == app.text_area[1].value == ""
+    create.assert_not_called()
+
+
+def test_placeholder_examples_never_become_submitted_input(api, monkeypatch):
+    _, create, _ = api
+    generate = Mock(wraps=service.generate_roadmap)
+    monkeypatch.setattr(service, "generate_roadmap", generate)
+    app = AppTest.from_file(APP).run()
+    app.button[0].click().run()
+    assert not app.exception and "check your learner inputs" in app.error[0].value
+    assert generate.call_args.kwargs["goal"] == ""
+    assert generate.call_args.kwargs["background"] == ""
+    create.assert_not_called()
+
+    app.text_area[0].input("Learn IAM policies")
+    app.button[0].click().run()
+    assert not app.exception and not app.error
+    assert generate.call_args.kwargs["goal"] == "Learn IAM policies"
+    assert generate.call_args.kwargs["background"] == ""
+    create.assert_called_once()
+    prompt = create.call_args.kwargs["messages"][1]["content"]
+    assert "e.g.," not in prompt
+    assert app.text_area[0].value == "Learn IAM policies"
+    assert app.text_area[1].value == ""
+
+
+def test_intensity_selector_is_absent_and_submission_uses_medium_default(api, monkeypatch):
+    _, create, _ = api
+    generate = Mock(wraps=service.generate_roadmap)
+    monkeypatch.setattr(service, "generate_roadmap", generate)
+    app = AppTest.from_file(APP).run()
+    assert not app.exception
+    assert all(widget.label != "Learning intensity" for widget in app.selectbox)
+    create.assert_not_called()
+
+    app.text_area[0].input("Learn IAM policies")
+    app.button[0].click().run()
+    assert not app.exception and not app.error
+    assert "learning_intensity" not in generate.call_args.kwargs
+    create.assert_called_once()
+    assert "Target intensity: medium" in create.call_args.kwargs["messages"][1]["content"]
+    assert "Learning intensity: Medium" in app.session_state["roadmap_markdown"]
