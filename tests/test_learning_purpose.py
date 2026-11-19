@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.agent import learning_check, react_agent, tools, weekly_planner
 from src.agent.learner_setup import load_learner_setup, make_learner_setup, validate_learner_setup
-from src.agent.learning_purpose import LEGACY_PURPOSE, PURPOSE_LABELS, purpose_context
+from src.agent.learning_purpose import LEGACY_PURPOSE, PURPOSE_LABELS, purpose_context, roadmap_purpose_context
 from src.agent.learning_progress_store import append_week_from_plan, load_learning_progress, update_day_learning_unit_path
 from src.agent.prompts import render_prompt
 from src.core.services.planner_service import run_weekly_planner_service
@@ -41,7 +41,7 @@ def test_routes_persist_restore_purpose_without_rewriting_roadmap(tmp_path, monk
     path = tmp_path / 'roadmaps' / 'distinct_submitted_goal_roadmap.json'
     roadmap = json.loads(path.read_text())
     assert roadmap['learner_setup']['learning_purpose'] == purpose
-    assert 'learning_purpose: ' + purpose in path.with_suffix('.md').read_text()
+    assert 'Learning purpose: ' + PURPOSE_LABELS[purpose] in path.with_suffix('.md').read_text()
     assert len(roadmap['phases']) == len(roadmap['phases'][0]['milestones']) == 1
     assert Path(result['result']['plan_path']).is_file()
     before = path.read_bytes()
@@ -91,7 +91,7 @@ def test_roadmap_template_selection_and_application_owned_purpose(tmp_path, monk
     else:
         assert request['system_prompt'] == render_prompt('roadmap.focused_system')
         assert 'One phase with one milestone' in request['system_prompt']
-    assert request['user_prompt'].endswith(purpose_context(selected))
+    assert request['user_prompt'].endswith(roadmap_purpose_context(selected))
     assert result['roadmap']['learner_setup'] == selected
     assert len(result['roadmap']['phases']) == 1
 

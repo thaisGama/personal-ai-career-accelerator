@@ -67,3 +67,19 @@ def test_usage_log_records_returned_model_and_token_counts(mocked_openai, capsys
         "completion: 25, total: 125\n"
     )
     assert result == "  unchanged response\n"
+
+
+@pytest.mark.parametrize("model,token_field", [
+    ("gpt-6-luna", "max_completion_tokens"), ("gpt-4o-mini", "max_tokens"),
+])
+def test_explicit_timeout_retry_and_budget_options(mocked_openai, model, token_field):
+    constructor, create = mocked_openai
+    weekly_planner.call_llm(
+        "System prompt", "User prompt", model=model,
+        max_tokens=8000, timeout=45.5, max_retries=0,
+    )
+    constructor.assert_called_once_with(
+        api_key="test-key-not-a-real-credential", timeout=45.5, max_retries=0,
+    )
+    create.assert_called_once()
+    assert create.call_args.kwargs[token_field] == 8000

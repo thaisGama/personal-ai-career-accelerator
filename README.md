@@ -63,6 +63,22 @@ Choose Certification Preparation, Topic Mastery, or Career Development through
 Use the [standalone roadmap prompt CLI](docs/roadmap_prompt_cli.md) to inspect one
 generation request without running the agent or writing application data.
 
+The standalone Streamlit app (`streamlit run roadmap_app.py`) enforces a
+2,000-character learning goal and 6,000-character background limit in both the
+form and generation service. Counts include whitespace; these allow detailed
+learner context while bounding request size. Existing learner validation still applies.
+Standalone generation uses an explicit 8,000-token output budget to leave room
+for complete multi-phase roadmaps, independent of the shared planner's budget.
+Its API timeout defaults to 120 seconds, allowing a detailed response while
+bounding network waits. Server callers can configure it through
+`generate_roadmap(..., timeout_seconds=90.0)`; it must be positive and finite.
+This is the SDK network timeout, not a strict end-to-end wall-clock deadline.
+SDK retries remain disabled, and no application retry is added. Shared Career
+Accelerator callers retain their existing timeout, retry, and token defaults.
+
+See [standalone development and beta configuration](standalone_roadmap/README.md)
+for environment settings, usage protection, and safe key setup.
+
 ---
 
 ## 🧪 Example Flow

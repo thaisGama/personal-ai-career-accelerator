@@ -13,6 +13,7 @@ from streamlit.testing.v1 import AppTest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.agent import react_agent, tools, weekly_planner
 from standalone_roadmap import service
+from standalone_roadmap.admission import AdmissionController
 
 
 CURRICULUM = {
@@ -34,6 +35,10 @@ APP = str(Path(__file__).resolve().parents[1] / "roadmap_app.py")
 
 @pytest.fixture
 def api(monkeypatch):
+    monkeypatch.setenv("ROADMAP_ENVIRONMENT", "beta")
+    monkeypatch.delenv("ROADMAP_DAILY_LIMIT", raising=False)
+    monkeypatch.delenv("ROADMAP_GENERATION_ENABLED", raising=False)
+    monkeypatch.setattr(service, "admission_controller", AdmissionController())
     monkeypatch.setenv("OPENAI_API_KEY", "fake-server-key")
     response = SimpleNamespace(usage=None, choices=[SimpleNamespace(message=SimpleNamespace(
         content=f"<<ROADMAP_JSON>>\n{json.dumps(CURRICULUM)}\n<<END_ROADMAP_JSON>>",
@@ -65,12 +70,16 @@ def test_success_uses_shared_prompt_one_request_and_no_persistence(api, tmp_path
     markdown = service.generate_roadmap(**INPUTS)
     assert "# Global Learning Roadmap: IAM policies" in markdown
     assert "Explain deny precedence" in markdown
-    assert "hours_per_week: 3.5" in markdown
-    assert "max_session_minutes: 30" in markdown
-    setup = dict(INPUTS, preferences="", max_session_minutes=30)
+    assert "Available study time: 3.5 hours per week" in markdown
+    assert "Preferred session duration: No preference" in markdown
+    assert "max_session_minutes" not in markdown
+    setup = dict(INPUTS, preferences="", preferred_session_minutes=None)
     prompt = tools.build_roadmap_prompt(setup["goal"], "medium", setup["background"], setup)
-    constructor.assert_called_once_with(api_key="fake-server-key", max_retries=0)
+    constructor.assert_called_once_with(
+        api_key="fake-server-key", max_retries=0, timeout=service.ROADMAP_TIMEOUT_SECONDS,
+    )
     create.assert_called_once()
+    assert create.call_args.kwargs["max_completion_tokens"] == service.ROADMAP_MAX_TOKENS
     assert create.call_args.kwargs["model"] == service.ROADMAP_MODEL
     assert create.call_args.kwargs["messages"] == [
         {"role": "system", "content": prompt["system"]},
@@ -85,12 +94,15 @@ def test_success_uses_shared_prompt_one_request_and_no_persistence(api, tmp_path
     {"hours_per_week": 0.75}, {"learning_purpose": "unsupported"},
     {"learning_intensity": "unsupported"}, {"background": None},
 ])
-def test_invalid_input_never_calls_llm(api, updates):
+def test_invalid_input_never_calls_llm(api, updates, monkeypatch):
+    monkeypatch.setenv("ROADMAP_DAILY_LIMIT", "1")
     constructor, create, _ = api
     with pytest.raises(ValueError):
         service.generate_roadmap(**dict(INPUTS, **updates))
     constructor.assert_not_called()
     create.assert_not_called()
+    assert service.generate_roadmap(**INPUTS)
+    create.assert_called_once()
 
 
 @pytest.mark.parametrize("raw", [
@@ -112,7 +124,9 @@ def test_api_failure_is_safe_without_retry(api):
     with pytest.raises(service.RoadmapGenerationError, match="server API configuration") as exc:
         service.generate_roadmap(**INPUTS)
     assert "secret API diagnostic" not in str(exc.value)
-    constructor.assert_called_once_with(api_key="fake-server-key", max_retries=0)
+    constructor.assert_called_once_with(
+        api_key="fake-server-key", max_retries=0, timeout=service.ROADMAP_TIMEOUT_SECONDS,
+    )
     create.assert_called_once()
 
 
@@ -198,3 +212,258 @@ def test_form_displays_safe_generation_errors(api, failure):
     assert "secret" not in app.error[0].value
     assert not app.markdown
     create.assert_called_once()
+
+
+@pytest.mark.parametrize("field,limit", [
+    ("goal", service.MAX_GOAL_CHARACTERS),
+    ("background", service.MAX_BACKGROUND_CHARACTERS),
+])
+def test_input_length_boundary_is_accepted(api, field, limit):
+    _, create, _ = api
+    assert service.generate_roadmap(**dict(INPUTS, **{field: "é" * limit}))
+    create.assert_called_once()
+
+
+@pytest.mark.parametrize("field,label,limit", [
+    ("goal", "Learning goal", service.MAX_GOAL_CHARACTERS),
+    ("background", "Background", service.MAX_BACKGROUND_CHARACTERS),
+])
+@pytest.mark.parametrize("padding", ["x", " "])
+def test_oversized_input_rejected_before_llm(api, field, label, limit, padding):
+    constructor, create, _ = api
+    with pytest.raises(ValueError, match=f"{label} must be {limit:,} characters or fewer"):
+        service.generate_roadmap(**dict(INPUTS, **{field: "x" * limit + padding}))
+    constructor.assert_not_called()
+    create.assert_not_called()
+
+
+def test_custom_timeout_reaches_api_client(api):
+    constructor, create, _ = api
+    service.generate_roadmap(**INPUTS, timeout_seconds=45.5)
+    constructor.assert_called_once_with(api_key="fake-server-key", max_retries=0, timeout=45.5)
+    create.assert_called_once()
+    assert create.call_args.kwargs["max_completion_tokens"] == service.ROADMAP_MAX_TOKENS
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), None, True])
+def test_invalid_timeout_rejected_before_llm(api, timeout):
+    constructor, create, _ = api
+    with pytest.raises(ValueError, match="positive, finite"):
+        service.generate_roadmap(**INPUTS, timeout_seconds=timeout)
+    constructor.assert_not_called()
+    create.assert_not_called()
+
+
+def test_timeout_failure_has_no_retry(api):
+    import openai
+
+    constructor, create, _ = api
+    create.side_effect = openai.APITimeoutError(request=Mock())
+    with pytest.raises(service.RoadmapGenerationError, match="connection"):
+        service.generate_roadmap(**INPUTS)
+    constructor.assert_called_once_with(
+        api_key="fake-server-key", max_retries=0, timeout=service.ROADMAP_TIMEOUT_SECONDS,
+    )
+    create.assert_called_once()
+
+
+def test_beta_default_allows_ten_attempts(api):
+    _, create, _ = api
+    for _ in range(10):
+        service.generate_roadmap(**INPUTS)
+    with pytest.raises(service.RoadmapUnavailableError, match="midnight UTC"):
+        service.generate_roadmap(**INPUTS)
+    assert create.call_count == 10
+
+
+def test_development_has_no_daily_quota_by_default(api, monkeypatch):
+    monkeypatch.setenv("ROADMAP_ENVIRONMENT", "development")
+    _, create, _ = api
+    for _ in range(11):
+        service.generate_roadmap(**INPUTS)
+    assert create.call_count == 11
+
+
+@pytest.mark.parametrize("failure", [None, "api", "output"])
+def test_capacity_released_and_admitted_failures_count(api, monkeypatch, failure):
+    monkeypatch.setenv("ROADMAP_DAILY_LIMIT", "2")
+    _, create, response = api
+    if failure == "api":
+        create.side_effect = RuntimeError("private diagnostic")
+    elif failure == "output":
+        response.choices[0].message.content = "invalid"
+    if failure:
+        with pytest.raises(service.RoadmapGenerationError):
+            service.generate_roadmap(**INPUTS)
+    else:
+        service.generate_roadmap(**INPUTS)
+    create.side_effect = None
+    response.choices[0].message.content = json.dumps(CURRICULUM)
+    assert service.generate_roadmap(**INPUTS)
+    with pytest.raises(service.RoadmapUnavailableError, match="allowance"):
+        service.generate_roadmap(**INPUTS)
+    assert create.call_count == 2
+
+
+@pytest.mark.parametrize("settings", [
+    {"ROADMAP_GENERATION_ENABLED": "false"},
+    {"ROADMAP_ENVIRONMENT": "typo-private-value"},
+    {"ROADMAP_DAILY_LIMIT": "unlimited"},
+    {"ROADMAP_GENERATION_ENABLED": "yes"},
+    {"OPENAI_API_KEY": ""},
+])
+def test_disabled_or_misconfigured_requests_spend_no_quota(api, monkeypatch, settings):
+    monkeypatch.setenv("ROADMAP_DAILY_LIMIT", "1")
+    constructor, create, _ = api
+    with monkeypatch.context() as change:
+        for key, value in settings.items():
+            change.setenv(key, value)
+        with pytest.raises(service.RoadmapUnavailableError) as exc:
+            service.generate_roadmap(**INPUTS)
+        assert "private-value" not in str(exc.value)
+    constructor.assert_not_called()
+    create.assert_not_called()
+    assert service.generate_roadmap(**INPUTS)
+    create.assert_called_once()
+
+
+def test_concurrent_generation_rejected_without_spending_quota(api, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    monkeypatch.setenv("ROADMAP_DAILY_LIMIT", "2")
+    _, create, response = api
+    entered, release = Event(), Event()
+
+    def blocked_api(**kwargs):
+        entered.set()
+        assert release.wait(5), "Test did not release the API request"
+        return response
+
+    create.side_effect = blocked_api
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(service.generate_roadmap, **INPUTS)
+        try:
+            assert entered.wait(5), "Generation did not reach the mocked API"
+            with pytest.raises(service.RoadmapUnavailableError, match="being generated"):
+                service.generate_roadmap(**INPUTS)
+            create.assert_called_once()
+        finally:
+            release.set()
+        assert pending.result(timeout=5)
+    create.side_effect = None
+    assert service.generate_roadmap(**INPUTS)
+    assert create.call_count == 2
+
+
+def test_allowance_shared_across_streamlit_sessions(api, monkeypatch):
+    monkeypatch.setenv("ROADMAP_DAILY_LIMIT", "1")
+    _, create, _ = api
+    first, second = AppTest.from_file(APP).run(), AppTest.from_file(APP).run()
+    first.text_area[0].input("First learner's goal")
+    first.button[0].click().run()
+    assert not first.exception and first.markdown
+    second.text_area[0].input("Second learner's goal")
+    second.button[0].click().run()
+    assert not second.exception and "allowance" in second.error[0].value
+    assert not second.markdown
+    create.assert_called_once()
+
+
+def test_invalid_form_edits_downloads_and_reruns_spend_no_quota(api, monkeypatch):
+    monkeypatch.setenv("ROADMAP_DAILY_LIMIT", "1")
+    _, create, _ = api
+    app = AppTest.from_file(APP).run()
+    app.text_area[0].input(" ")
+    app.button[0].click().run()
+    assert not app.exception and app.error
+    create.assert_not_called()
+    app.text_area[0].input("Learn IAM policies")
+    app.button[0].click().run()
+    assert not app.exception and not app.error
+    markdown = app.session_state["roadmap_markdown"]
+    app.text_area[0].input("Unsubmitted edit").run()
+    app.run()
+    assert not app.exception
+    assert app.get("download_button")[0].proto.ignore_rerun
+    assert app.get("download_button")[0].proto.url
+    create.assert_called_once()
+    # The next submitted attempt must still see the original quota usage.
+    app.button[0].click().run()
+    assert not app.exception and "allowance" in app.error[0].value
+    assert app.session_state["roadmap_markdown"] == markdown
+    create.assert_called_once()
+
+
+def test_kill_switch_preserves_previous_result_and_download(api, monkeypatch):
+    _, create, _ = api
+    app = AppTest.from_file(APP).run()
+    app.text_area[0].input("Learn IAM policies")
+    app.button[0].click().run()
+    markdown = app.session_state["roadmap_markdown"]
+    monkeypatch.setenv("ROADMAP_GENERATION_ENABLED", "false")
+    app.run()
+    assert app.session_state["roadmap_markdown"] == markdown
+    app.button[0].click().run()
+    assert not app.exception and "temporarily disabled" in app.error[0].value
+    assert app.session_state["roadmap_markdown"] == markdown
+    assert app.markdown[0].value == markdown.strip()
+    assert app.get("download_button")
+    create.assert_called_once()
+
+
+def test_form_placeholders_are_visible_with_empty_initial_inputs(api):
+    _, create, _ = api
+    app = AppTest.from_file(APP).run()
+    assert not app.exception
+    assert app.text_area[0].label == "Learning goal (required)"
+    assert app.text_area[0].proto.placeholder == (
+        "e.g., Learn to build and deploy a RAG application using Python and AWS."
+    )
+    assert app.text_area[1].label == "Current background/skills (optional)"
+    assert app.text_area[1].proto.placeholder == (
+        "e.g., I know Python and basic AWS, but have never built an LLM application."
+    )
+    assert app.text_area[0].value == app.text_area[1].value == ""
+    create.assert_not_called()
+
+
+def test_placeholder_examples_never_become_submitted_input(api, monkeypatch):
+    _, create, _ = api
+    generate = Mock(wraps=service.generate_roadmap)
+    monkeypatch.setattr(service, "generate_roadmap", generate)
+    app = AppTest.from_file(APP).run()
+    app.button[0].click().run()
+    assert not app.exception and "check your learner inputs" in app.error[0].value
+    assert generate.call_args.kwargs["goal"] == ""
+    assert generate.call_args.kwargs["background"] == ""
+    create.assert_not_called()
+
+    app.text_area[0].input("Learn IAM policies")
+    app.button[0].click().run()
+    assert not app.exception and not app.error
+    assert generate.call_args.kwargs["goal"] == "Learn IAM policies"
+    assert generate.call_args.kwargs["background"] == ""
+    create.assert_called_once()
+    prompt = create.call_args.kwargs["messages"][1]["content"]
+    assert "e.g.," not in prompt
+    assert app.text_area[0].value == "Learn IAM policies"
+    assert app.text_area[1].value == ""
+
+
+def test_intensity_selector_is_absent_and_submission_uses_medium_default(api, monkeypatch):
+    _, create, _ = api
+    generate = Mock(wraps=service.generate_roadmap)
+    monkeypatch.setattr(service, "generate_roadmap", generate)
+    app = AppTest.from_file(APP).run()
+    assert not app.exception
+    assert all(widget.label != "Learning intensity" for widget in app.selectbox)
+    create.assert_not_called()
+
+    app.text_area[0].input("Learn IAM policies")
+    app.button[0].click().run()
+    assert not app.exception and not app.error
+    assert "learning_intensity" not in generate.call_args.kwargs
+    create.assert_called_once()
+    assert "Target intensity: medium" in create.call_args.kwargs["messages"][1]["content"]
+    assert "Learning intensity: Medium" in app.session_state["roadmap_markdown"]

@@ -1,0 +1,13 @@
+
+
+LEARNING PURPOSE: {purpose}
+Learner goal: {goal}
+{instructions}
+
+ROADMAP SCOPE AND LEARNING PREFERENCES
+Available study time: {hours_per_week} hours per week.
+{session_guidance}
+Cover the complete learning journey needed for the stated goal, proportional to its scope. Include phases, milestones, outcomes, definitions of done, deliverables, suggested practice, and resources using the required schema.
+Suggested practice entries are representative meaningful learning activities, not an exhaustive session timetable. Do not assign activities to particular weeks or days or impose a fixed number of sessions. Detailed scheduling belongs to the Weekly Planner.
+Weekly availability informs overall duration; it must not truncate the learning journey to a single week. Estimate realistic effort at milestone, phase, and roadmap level and keep the required 2/5/7-hour comparisons.
+Preserve the required output tags and schema.

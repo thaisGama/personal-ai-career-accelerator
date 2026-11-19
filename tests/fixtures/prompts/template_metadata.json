@@ -130,6 +130,11 @@
     "sha256": "a1c405ad1012aececad067fd9c3678fa4a99a49bfa9a8835f210181840d829e5"
   },
   {
+    "prompt_id": "roadmap.context",
+    "version": "2.0.0",
+    "sha256": "ece35c767e7f6a812c487622fa04b1f5ff2638ed5b91c67e6fa368219570a5fa"
+  },
+  {
     "prompt_id": "roadmap.focused_system",
     "version": "1.0.0",
     "sha256": "425c94b7f570f4e63610a0cc90eb67db412d330f54c0f53cbb8534cc4545621a"
